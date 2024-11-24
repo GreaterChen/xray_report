@@ -320,6 +320,11 @@ class ClsGen(nn.Module):
         self.label_embedding = nn.Embedding(num_topics, embed_dim)
 
     def forward(self, image, history=None, caption=None, label=None, threshold=0.15, bos_id=1, eos_id=2, pad_id=3, max_len=300, get_emb=False):
+        
+        # image 有两个元素，第一个是multi-view的图像，第二个是vpos，代表是哪个视角的图像
+        # history 是 source_info, 包含['INDICATION:', 'HISTORY:', 'CLINICAL HISTORY:', 'REASON FOR EXAM:', 'REASON FOR EXAMINATION:', 'CLINICAL INFORMATION:', 'CLINICAL INDICATION:', 'PATIENT HISTORY:']
+        # caption是FINDINGS， 最大token长度为1000，后面用0填充。
+        # label 有两个元素，第一个是官方提供的各种病是否存在，第二个是预先构建了一个keyword词典，用0-1表征当前caption中是否存在这些keyword
         label = label.long() if label != None else label
         img_mlc, img_emb = self.classifier(img=image, txt=history, lbl=label, threshold=threshold, pad_id=pad_id, get_embed=True) # (B,T,C), (B,T,E)
         lbl_idx = torch.arange(img_emb.shape[1]).unsqueeze(0).repeat(img_emb.shape[0],1).to(img_emb.device) # (B,T)

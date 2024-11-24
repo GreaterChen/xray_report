@@ -64,7 +64,7 @@ def infer(data_loader, model, device='cpu', threshold=None):
     return outputs, targets
 #
 # --- Hyperparameters ---
-os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 # os.environ["OMP_NUM_THREADS"] = "4"
 # torch.set_num_threads(4)
 torch.manual_seed(seed=123)
@@ -73,7 +73,7 @@ RELOAD = False # True / False
 PHASE = 'TRAIN' # TRAIN / TEST / INFER
 DATASET_NAME = 'MIMIC' # NIHCXR / NLMCXR / MIMIC
 BACKBONE_NAME = 'ResNet50' # ResNeSt50 / ResNet50 / DenseNet121
-MODEL_NAME = 'ClsGen' # ClsGen / ClsGenInt / VisualTransformer / GumbelTransformer
+MODEL_NAME = 'HiMrGn' # ClsGen / ClsGenInt / VisualTransformer / GumbelTransformer / HiMrGn
 
 if DATASET_NAME == 'MIMIC':
     EPOCHS = 100 # Start overfitting after 20 epochs
@@ -110,6 +110,13 @@ if __name__ == "__main__":
         KW_SRC = ['image','caption','caption_length'] # kwargs of Classifier
         KW_TGT = None
         KW_OUT = None
+
+    elif MODEL_NAME == 'HiMrGn':
+        SOURCES = ['image']
+        TARGETS = ['findings','impression']
+        KW_SRC = ['image','caption','caption_length'] # kwargs of Classifier
+        KW_TGT = None
+        KW_OUT = None
         
     else:
         raise ValueError('Invalid BACKBONE_NAME')
@@ -121,7 +128,7 @@ if __name__ == "__main__":
         NUM_LABELS = 114
         NUM_CLASSES = 2
         
-        dataset = MIMIC('/home/LAB/liudy/Datasets/mimic/', INPUT_SIZE, view_pos=['AP','PA','LATERAL'], max_views=MAX_VIEWS, sources=SOURCES, targets=TARGETS)
+        dataset = MIMIC('/mnt/chenlb/mimic/', INPUT_SIZE, view_pos=['AP','PA','LATERAL'], max_views=MAX_VIEWS, sources=SOURCES, targets=TARGETS)
         train_data, val_data, test_data = dataset.get_subsets(pvt=0.9, seed=0, generate_splits=True, debug_mode=False, train_phase=(PHASE == 'TRAIN'))
         
         VOCAB_SIZE = len(dataset.vocab)
@@ -162,7 +169,7 @@ if __name__ == "__main__":
         raise ValueError('Invalid BACKBONE_NAME')
 
     # --- Choose a Model ---
-    if MODEL_NAME == 'ClsGen':
+    if MODEL_NAME == 'ClsGen' or MODEL_NAME == 'HiMrGn':
         LR = 5e-4 # Fastest LR
         # LR = 3e-4 # Fastest LR
         WD = 1e-2 # Avoid overfitting with L2 regularization

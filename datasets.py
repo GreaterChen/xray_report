@@ -107,9 +107,11 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                 view_pos=['AP', 'PA', 'LATERAL'], max_views=2, sources=['image','history'], targets=['label'], 
                 max_len=1000, vocab_file='mimic_unigram_1000.model'):
 
-        self.source_sections = ['INDICATION:', 'HISTORY:', 'CLINICAL HISTORY:', 'REASON FOR EXAM:', 'REASON FOR EXAMINATION:', 'CLINICAL INFORMATION:', 'CLINICAL INDICATION:', 'PATIENT HISTORY:']
-        self.target_sections = ['FINDINGS:']
-        self.vocab = spm.SentencePieceProcessor(model_file=directory + vocab_file)
+        # self.source_sections = ['INDICATION:', 'HISTORY:', 'CLINICAL HISTORY:', 'REASON FOR EXAM:', 'REASON FOR EXAMINATION:', 'CLINICAL INFORMATION:', 'CLINICAL INDICATION:', 'PATIENT HISTORY:']
+        self.source_sections = []
+        # self.target_sections = ['FINDINGS:']
+        self.target_sections = ['FINDINGS:', 'IMPRESSION:']
+        self.vocab = spm.SentencePieceProcessor(model_file=os.path.join(directory, vocab_file))
         self.vocab_file = vocab_file # Save it for subsets
 
         self.sources = sources # Choose which section as input
@@ -157,7 +159,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
 
                 pos = self.img_positions[img_files[i][:-4]]
                 img = Image.open(img_file).convert('RGB')
-                imgs.append(self.transform(img).unsqueeze(0)) # (1,C,W,H)
+                imgs.append(self.transform(img).unsqueeze(0)) # (1,C,W,H) 
                 vpos.append(self.dict_positions[pos])
             
             # If the number of images is smaller than V, pad the tensor with dummy images
@@ -173,50 +175,66 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         info = self.img_captions[idx]
         
         source_info = []
-        for section, content in info.items():
-            if section in self.source_sections:
-                source_info.append(content)
-        source_info = ' '.join(source_info)
+        # for section, content in info.items():
+        #     if section in self.source_sections:
+        #         source_info.append(content)
+        # source_info = ' '.join(source_info)
         
-        encoded_source_info = [self.vocab.bos_id()] + self.vocab.encode(source_info) + [self.vocab.eos_id()]
-        source_info = np.ones(self.max_len, dtype=np.int64) * self.vocab.pad_id()
-        source_info[:min(len(encoded_source_info), self.max_len)] = encoded_source_info[:min(len(encoded_source_info), self.max_len)]
+        # encoded_source_info = [self.vocab.bos_id()] + self.vocab.encode(source_info) + [self.vocab.eos_id()]
+        # source_info = np.ones(self.max_len, dtype=np.int64) * self.vocab.pad_id()
+        # source_info[:min(len(encoded_source_info), self.max_len)] = encoded_source_info[:min(len(encoded_source_info), self.max_len)]
+
+
+        findings = info['FINDINGS:']
+        encoded_findings = [self.vocab.bos_id()] + self.vocab.encode(findings) + [self.vocab.eos_id()]
+        findings = np.ones(self.max_len, dtype=np.int64) * self.vocab.pad_id()
+        findings[:min(len(encoded_findings), self.max_len)] = encoded_findings[:min(len(encoded_findings), self.max_len)]
+
+        impression = info['IMPRESSION:']
+        encoded_impression = [self.vocab.bos_id()] + self.vocab.encode(impression) + [self.vocab.eos_id()]
+        impression = np.ones(self.max_len, dtype=np.int64) * self.vocab.pad_id()
+        impression[:min(len(encoded_impression), self.max_len)] = encoded_impression[:min(len(encoded_impression), self.max_len)]
 
         target_info = []
-        for section, content in info.items():
-            if section in self.target_sections:
-                target_info.append(content)
-        target_info = ' '.join(target_info)
+        # for section, content in info.items():
+        #     if section in self.target_sections:
+        #         target_info.append(content)
+        # target_info = ' '.join(target_info)
         
         # Compute extra labels (noun phrases)
-        np_labels = np.zeros(len(self.top_np), dtype=float)
-        for i in range(len(self.top_np)):
-            if self.top_np[i] in target_info:
-                np_labels[i] = 1
+        # np_labels = np.zeros(len(self.top_np), dtype=float)
+        # for i in range(len(self.top_np)):
+        #     if self.top_np[i] in target_info:
+        #         np_labels[i] = 1
                 
-        encoded_target_info = [self.vocab.bos_id()] + self.vocab.encode(target_info) + [self.vocab.eos_id()]
-        target_info = np.ones(self.max_len, dtype=np.int64) * self.vocab.pad_id()
-        target_info[:min(len(encoded_target_info), self.max_len)] = encoded_target_info[:min(len(encoded_target_info), self.max_len)]
+        # encoded_target_info = [self.vocab.bos_id()] + self.vocab.encode(target_info) + [self.vocab.eos_id()]
+        # target_info = np.ones(self.max_len, dtype=np.int64) * self.vocab.pad_id()
+        # target_info[:min(len(encoded_target_info), self.max_len)] = encoded_target_info[:min(len(encoded_target_info), self.max_len)]
 
         for i in range(len(self.sources)):
             if self.sources[i] == 'image':
                 sources.append((imgs,vpos))
-            if self.sources[i] == 'history':
-                sources.append(source_info)
-            if self.sources[i] == 'label':
-                sources.append(np.concatenate([self.img_labels[idx], np_labels]))
-            if self.sources[i] == 'caption':
-                sources.append(target_info)
-            if self.sources[i] == 'caption_length':
-                sources.append(min(len(encoded_target_info), self.max_len))
+            # if self.sources[i] == 'history':
+            #     sources.append(source_info)
+            # if self.sources[i] == 'label':
+            #     sources.append(np.concatenate([self.img_labels[idx], np_labels]))
+            # if self.sources[i] == 'caption':
+            #     sources.append(target_info)
+            # if self.sources[i] == 'caption_length':
+            #     sources.append(min(len(encoded_target_info), self.max_len))
                 
         for i in range(len(self.targets)):
-            if self.targets[i] == 'label':
-                targets.append(np.concatenate([self.img_labels[idx], np_labels]))
-            if self.targets[i] == 'caption':
-                targets.append(target_info)
-            if self.targets[i] == 'caption_length':
-                targets.append(min(len(encoded_target_info), self.max_len))
+            # if self.targets[i] == 'label':
+            #     targets.append(np.concatenate([self.img_labels[idx], np_labels]))   # 拼接了原始病情标签以及关键词是否出现的标签
+            # if self.targets[i] == 'caption':
+            #     targets.append(target_info)
+            # if self.targets[i] == 'caption_length':
+            #     targets.append(min(len(encoded_target_info), self.max_len))
+            if self.targets[i] == 'findings':
+                targets.append(findings)
+            elif self.targets[i] == 'impression':
+                targets.append(impression)
+
                 
         return sources if len(sources) > 1 else sources[0], targets if len(targets) > 1 else targets[0]
 
@@ -238,19 +256,19 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                 # Make sure there is at least one image in each folder, and a non-empty findings section in each report
                 if len(file_list) and ('FINDINGS:' in report) and (report['FINDINGS:'] != ''): 
                     img_files[(pid,sid)] = file_list
-                    img_captions[(pid,sid)] = report
+                    img_captions[(pid,sid)] = report    # Include FINDINGS and IMPRESSION
             except Exception as e:
                 pass
         return img_captions, img_files
 
     def __get_view_positions(self, file_name='mimic-cxr-2.0.0-metadata.csv'):
-        txt_file = self.dir + file_name
+        txt_file = os.path.join(self.dir, file_name)
         data = pd.read_csv(txt_file, dtype=object)
         data = data.to_numpy().astype(str)
         return dict(zip(data[:,0].tolist(), data[:,4].tolist())), np.unique(data[:,4]).tolist()
 
     def __get_labels(self, binary_mode, file_name='mimic-cxr-2.0.0-chexpert.csv'):
-        txt_file = self.dir + file_name
+        txt_file = os.path.join(self.dir, file_name)
         data = pd.read_csv(txt_file, dtype=object)
 
         label_names = list(data.columns.values[2:])
@@ -271,7 +289,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         return img_labels, label_names
 
     def __get_nounphrase(self, top_k=100, file_name='count_nounphrase.json'):
-        count_np = json.load(open(self.dir + file_name, 'r'))
+        count_np = json.load(open(os.path.join(self.dir, file_name), 'r'))
         sorted_count_np = sorted([(k,v) for k,v in count_np.items()], key=lambda x: x[1], reverse=True)
         top_nounphrases = [k for k,v in sorted_count_np][:top_k]
         return top_nounphrases
@@ -286,10 +304,10 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         self.top_np = self.__get_nounphrase()
         
     def __generate_splits(self, test_size=0.2, seed=0, file_name='mimic-cxr-2.0.0-chexpert.csv'):
-        train_val_file = open(self.dir + 'train_val_list.txt', 'w')
-        test_file = open(self.dir + 'test_list.txt', 'w')
+        train_val_file = open(os.path.join(self.dir, 'train_val_list.txt'), 'w')
+        test_file = open(os.path.join(self.dir, 'test_list.txt'), 'w')
 
-        txt_file = self.dir + file_name
+        txt_file = os.path.join(self.dir, file_name)
         data = pd.read_csv(txt_file, dtype=object)
         data = data.to_numpy().astype(str)
 
@@ -327,8 +345,8 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             self.__generate_splits(seed=0)
             print('New splits generated')
             
-        train_files = np.loadtxt(self.dir + 'train_val_list.txt', dtype=str)
-        test_files = np.loadtxt(self.dir + 'test_list.txt', dtype=str)
+        train_files = np.loadtxt(os.path.join(self.dir, 'train_val_list.txt'), dtype=str)
+        test_files = np.loadtxt(os.path.join(self.dir, 'test_list.txt'), dtype=str)
 
         train_files = np.array([f.split('/') for f in train_files])
         test_files = np.array([f.split('/') for f in test_files])
