@@ -141,7 +141,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         return len(self.idx_pidsid)
 #rewrite
     def __getitem__(self, idx):
-        idx = self.idx_pidsid[idx]
+        idx = self.idx_pidsid[idx]  # TODO 应当删掉不存在 findings 或者 impression 的样本
 
         sources = []
         targets = []
@@ -151,7 +151,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             imgs, vpos = [], []
             
             # Randomly select V images from each folder 
-            new_orders = np.random.permutation(len(self.img_files[idx]))
+            new_orders = np.random.permutation(len(self.img_files[idx]))    # TODO 处理视角问题
             img_files = np.array(self.img_files[idx])[new_orders].tolist()
             for i in range(min(self.max_views,len(img_files))):
                 # img_file = self.dir + 'images/' + idx[0] + '/' + idx[1] + '/' + img_files[i]
@@ -161,7 +161,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                 img = Image.open(img_file).convert('RGB')
                 imgs.append(self.transform(img).unsqueeze(0)) # (1,C,W,H) 
                 vpos.append(self.dict_positions[pos])
-            
+
             # If the number of images is smaller than V, pad the tensor with dummy images
             cur_len = len(vpos)
             for i in range(cur_len, self.max_views):
@@ -175,61 +175,36 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         info = self.img_captions[idx]
         
         source_info = []
-        # for section, content in info.items():
-        #     if section in self.source_sections:
-        #         source_info.append(content)
-        # source_info = ' '.join(source_info)
+
+        if 'FINDINGS:' in info.keys():
+            findings = info['FINDINGS:']
+        else:
+            findings = ''
         
-        # encoded_source_info = [self.vocab.bos_id()] + self.vocab.encode(source_info) + [self.vocab.eos_id()]
-        # source_info = np.ones(self.max_len, dtype=np.int64) * self.vocab.pad_id()
-        # source_info[:min(len(encoded_source_info), self.max_len)] = encoded_source_info[:min(len(encoded_source_info), self.max_len)]
-
-
-        findings = info['FINDINGS:']
         encoded_findings = [self.vocab.bos_id()] + self.vocab.encode(findings) + [self.vocab.eos_id()]
         findings = np.ones(self.max_len, dtype=np.int64) * self.vocab.pad_id()
         findings[:min(len(encoded_findings), self.max_len)] = encoded_findings[:min(len(encoded_findings), self.max_len)]
 
-        impression = info['IMPRESSION:']
+
+        if 'IMPRESSION:' in info.keys():
+            impression = info['IMPRESSION:']
+        else:
+            impression = ''
         encoded_impression = [self.vocab.bos_id()] + self.vocab.encode(impression) + [self.vocab.eos_id()]
         impression = np.ones(self.max_len, dtype=np.int64) * self.vocab.pad_id()
         impression[:min(len(encoded_impression), self.max_len)] = encoded_impression[:min(len(encoded_impression), self.max_len)]
 
         target_info = []
-        # for section, content in info.items():
-        #     if section in self.target_sections:
-        #         target_info.append(content)
-        # target_info = ' '.join(target_info)
-        
-        # Compute extra labels (noun phrases)
-        # np_labels = np.zeros(len(self.top_np), dtype=float)
-        # for i in range(len(self.top_np)):
-        #     if self.top_np[i] in target_info:
-        #         np_labels[i] = 1
-                
-        # encoded_target_info = [self.vocab.bos_id()] + self.vocab.encode(target_info) + [self.vocab.eos_id()]
-        # target_info = np.ones(self.max_len, dtype=np.int64) * self.vocab.pad_id()
-        # target_info[:min(len(encoded_target_info), self.max_len)] = encoded_target_info[:min(len(encoded_target_info), self.max_len)]
 
         for i in range(len(self.sources)):
             if self.sources[i] == 'image':
-                sources.append((imgs,vpos))
-            # if self.sources[i] == 'history':
-            #     sources.append(source_info)
-            # if self.sources[i] == 'label':
-            #     sources.append(np.concatenate([self.img_labels[idx], np_labels]))
-            # if self.sources[i] == 'caption':
-            #     sources.append(target_info)
-            # if self.sources[i] == 'caption_length':
-            #     sources.append(min(len(encoded_target_info), self.max_len))
+                sources.append(imgs)
+            elif self.sources[i] == 'findings':
+                sources.append(findings)
+            elif self.sources[i] == 'impression':
+                sources.append(impression)
                 
         for i in range(len(self.targets)):
-            # if self.targets[i] == 'label':
-            #     targets.append(np.concatenate([self.img_labels[idx], np_labels]))   # 拼接了原始病情标签以及关键词是否出现的标签
-            # if self.targets[i] == 'caption':
-            #     targets.append(target_info)
-            # if self.targets[i] == 'caption_length':
-            #     targets.append(min(len(encoded_target_info), self.max_len))
             if self.targets[i] == 'findings':
                 targets.append(findings)
             elif self.targets[i] == 'impression':

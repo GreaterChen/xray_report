@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from timm import create_model
+import math
         
 # --- Transformer Modules ---
 class MultiheadAttention(nn.Module):
@@ -342,6 +344,207 @@ class ClsGen(nn.Module):
             src_emb = img_emb + lbl_emb
             cap_gen = self.generator(source_embed=src_emb, token_index=caption, max_len=max_len, bos_id=bos_id, pad_id=pad_id) # (B,L,S)
             return cap_gen, img_mlc
+
+
+class SwinFeatureExtractor(nn.Module):
+    def __init__(self, image_encoder_name='swin_large_patch4_window7_224', pretrained=True):
+        super().__init__()
+        # 加载预训练的 Swin Transformer
+        self.image_encoder = create_model(image_encoder_name, pretrained=pretrained, features_only=True)
+        
+        # 映射到低维视觉特征 Fv
+        self.feature_proj = nn.Sequential(
+            nn.Conv2d(self.image_encoder.feature_info[-1]['num_chs'], 512, kernel_size=1),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((1, 1))  # 提取全局特征
+        )
+    
+    def forward(self, image):
+        """
+        image: 输入的图像，形状为 (B, C, H, W)
+        返回:
+        Fv: 视觉特征，形状为 (B, 512)
+        """
+        # TODO 处理多视角
+        image = image[:, 0, :, :, :]
+
+        # 提取图像的多层特征
+        features = self.image_encoder(image)
+        
+        # 获取最后一层特征并调整维度顺序 (B, C, H, W)
+        features_last = features[-1].permute(0, 3, 1, 2)
+        
+        # 仅使用最后一层特征进行降维和处理
+        fv = self.feature_proj(features_last)  # 输出形状 (B, 512, 1, 1)
+        fv = fv.squeeze(-1).squeeze(-1)      # 输出形状 (B, 512)
+        
+        return fv
+    
+class DiseaseFeatureProjector(nn.Module):
+    def __init__(self, input_dim, num_diseases, feature_dim):
+        """
+        Args:
+            input_dim: 输入视觉特征 x 的维度（Swin Transformer 输出的维度 C）。
+            num_diseases: 疾病数量 N_v。
+            feature_dim: 每种疾病的特征维度 C_v。
+        """
+        super().__init__()
+        self.num_diseases = num_diseases
+        self.feature_dim = feature_dim
+        
+        # 定义可学习的 A_i 和 b_i
+        self.A = nn.Parameter(torch.randn(num_diseases, input_dim, feature_dim))  # A 的形状 (N_v, C, C_v)
+        self.b = nn.Parameter(torch.randn(num_diseases, feature_dim))  # b 的形状 (N_v, C_v)
+
+    def forward(self, x):
+        """
+        Args:
+            x: 输入的视觉特征，形状为 (B, C)。
+        Returns:
+            Fv: 疾病特征矩阵，形状为 (B, N_v, C_v)。
+        """
+        # 扩展 x 的维度以匹配 A 的形状
+        # x 的形状 (B, C)，A 的形状 (N_v, C, C_v)
+        # A @ x 结果形状为 (B, N_v, C_v)
+        F_v = torch.einsum('bc,ncf->bnf', x, self.A) + self.b  # (B, N_v, C_v)
+        
+        # 对每个疾病的特征进行 softmax 归一化
+        F_v = torch.softmax(F_v, dim=-1)  # 对每个疾病的特征向量进行归一化
+        return F_v
+    
+class TextDecoder(nn.Module):
+    def __init__(self, input_dim=512, hidden_dim=512, vocab_size=1000, num_layers=2, max_len=1000, pad_id=0, bos_id=1, eos_id=2):
+        super(TextDecoder, self).__init__()
+        self.embedding = nn.Embedding(vocab_size, hidden_dim)  # 词嵌入
+        self.transformer_decoder = nn.TransformerDecoder(
+            nn.TransformerDecoderLayer(d_model=hidden_dim, nhead=8), num_layers=num_layers)
+        self.fc_out = nn.Linear(hidden_dim, vocab_size)  # 输出词汇分布
+        self.hidden_dim = hidden_dim
+        self.max_len = max_len
+        self.pad_id = pad_id
+        self.bos_id = bos_id
+        self.eos_id = eos_id
+
+        # 生成 Sinusoidal 位置编码
+        self.register_buffer("positional_encoding", self._get_sinusoidal_encoding(max_len, hidden_dim))
+
+    def _get_sinusoidal_encoding(self, max_len, d_model):
+        """
+        创建 Sinusoidal 位置编码。
+        Args:
+            max_len: 最大序列长度。
+            d_model: 隐藏层维度。
+        Returns:
+            position_encoding: 形状 (max_len, d_model)
+        """
+        position = torch.arange(0, max_len).unsqueeze(1)  # (max_len, 1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))  # (d_model // 2)
+        
+        # 计算 sin 和 cos 编码
+        pe = torch.zeros(max_len, d_model)
+        pe[:, 0::2] = torch.sin(position * div_term)  # 偶数位置使用 sin
+        pe[:, 1::2] = torch.cos(position * div_term)  # 奇数位置使用 cos
+        
+        return pe.unsqueeze(0)  # (1, max_len, d_model)
+
+    def forward(self, fv, target_sequence=None):
+        """
+        Args:
+            fv: 疾病特征矩阵，形状 (B, N_v, C_v)，作为 memory。
+            target_sequence: 编码的目标序列，形状 (B, max_len)，仅在训练阶段提供。
+        Returns:
+            output: 生成的词汇分布，形状 (B, max_len, vocab_size)。
+            F_t: 文本特征矩阵，形状 (B, max_len, hidden_dim)。
+        """
+        batch_size = fv.size(0)
+        memory = fv.permute(1, 0, 2)  # 转换为 (N_v, B, C_v)
+
+        if target_sequence is not None:  # 训练阶段
+            seq_len = target_sequence.size(1)
+
+            # 嵌入目标序列并加上 Sinusoidal 位置编码
+            target_embed = self.embedding(target_sequence)  # (B, seq_len, hidden_dim)
+            position_encoding = self.positional_encoding[:, :seq_len, :].to(target_embed.device)  # 动态调整长度    # (1, seq_len, hidden_dim)
+            target_embed = target_embed + position_encoding  # (B, seq_len, hidden_dim)
+
+            # 自回归掩码
+            target_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool().to(target_embed.device)
+
+            # Transformer 解码器
+            decoder_output = self.transformer_decoder(
+                tgt=target_embed.permute(1, 0, 2),  # (seq_len, B, hidden_dim)
+                memory=memory,                     # (N_v, B, C_v)
+                tgt_mask=target_mask               # 自回归掩码
+            )  # 输出 (seq_len, B, hidden_dim)
+
+            decoder_output = decoder_output.permute(1, 0, 2)  # 转换回 (B, seq_len, hidden_dim)
+
+            # 生成词汇分布
+            output = self.fc_out(decoder_output)  # (B, seq_len, vocab_size)
+
+            # 生成 F_t：对每个隐藏状态应用 softmax
+            F_t = F.softmax(decoder_output, dim=-1)  # (B, seq_len, hidden_dim)
+
+        else:  # 测试阶段
+            outputs = torch.zeros(batch_size, self.max_len, dtype=torch.long).fill_(self.pad_id).to(fv.device)
+            outputs[:, 0] = self.bos_id  # 设置起始标记
+
+            F_t_list = []
+
+            for t in range(1, self.max_len):
+                # 嵌入当前序列并加上位置编码
+                target_embed = self.embedding(outputs[:, :t])  # (B, t, hidden_dim)
+                position_encoding = self.positional_encoding[:, :t, :].to(target_embed.device)  # 动态调整长度
+                target_embed = target_embed + position_encoding
+
+                # 自回归掩码
+                target_mask = torch.triu(torch.ones(t, t), diagonal=1).bool().to(target_embed.device)
+
+                # Transformer 解码器
+                decoder_output = self.transformer_decoder(
+                    tgt=target_embed.permute(1, 0, 2),  # (t, B, hidden_dim)
+                    memory=memory,                     # (N_v, B, C_v)
+                    tgt_mask=target_mask               # 自回归掩码
+                )  # 输出 (t, B, hidden_dim)
+
+                decoder_output = decoder_output.permute(1, 0, 2)  # 转换回 (B, t, hidden_dim)
+
+                # 预测下一个词
+                output_t = self.fc_out(decoder_output[:, -1, :])  # (B, vocab_size)
+                next_token = output_t.argmax(dim=-1)  # (B)
+
+                outputs[:, t] = next_token
+
+                # 生成 F_t：对每个隐藏状态应用 softmax
+                F_t_t = F.softmax(decoder_output[:, -1, :], dim=-1)  # (B, hidden_dim)
+                F_t_list.append(F_t_t)
+
+                # 如果所有序列都生成了 <eos>，提前停止
+                if (next_token == self.eos_id).all():
+                    break
+
+            output = outputs  # 返回生成的序列 (B, max_len)
+            F_t = torch.stack(F_t_list, dim=1)  # 拼接 F_t，形状 (B, max_len, hidden_dim)
+
+        return output, F_t
+    
+
+class HiMrGn(nn.Module):
+    def __init__(self, image_encoder, features_projector, findings_decoder):
+        super().__init__()
+        self.image_encoder = image_encoder
+        self.features_projector = features_projector
+        self.findings_decoder = findings_decoder
+        
+    def forward(self, image, vpos=None, findings=None, impression=None, threshold=0.15, bos_id=1, eos_id=2, pad_id=3, max_len=300, get_emb=False):
+        x = self.image_encoder(image)   # (B, C)
+
+        F_v = self.features_projector(x)    # (B, Nv, Cv)
+
+        findings, F_t = self.findings_decoder(F_v, findings)
+
+        return findings
+
 
 class ClsGenInt(nn.Module):
     def __init__(self, clsgen, interpreter, freeze_evaluator=True):

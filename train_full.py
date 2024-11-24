@@ -23,7 +23,7 @@ from tqdm import tqdm
 from utils import save, load, train, test, data_to_device, data_concatenate
 from datasets import NIHCXR, MIMIC, NLMCXR
 from losses import CELoss, CELossTotal, CELossTotalEval, CELossTransfer, CELossShift
-from models import CNN, MVCNN, TNN, Classifier, Generator, ClsGen, ClsGenInt
+from models import *
 from baselines.transformer.models import LSTM_Attn, Transformer, GumbelTransformer
 from baselines.rnn.models import ST
 
@@ -77,8 +77,9 @@ MODEL_NAME = 'HiMrGn' # ClsGen / ClsGenInt / VisualTransformer / GumbelTransform
 
 if DATASET_NAME == 'MIMIC':
     EPOCHS = 100 # Start overfitting after 20 epochs
-    BATCH_SIZE =  96 if PHASE == 'TRAIN' else 96 # 192 # Fit 4 GPUs
+    BATCH_SIZE =  32 if PHASE == 'TRAIN' else 32 # 192 # Fit 4 GPUs
     MILESTONES = [25, 40, 55, 70, 85] # Reduce LR by 10 after reaching milestone epochs
+    NUM_DISEASES = 14
     
 elif DATASET_NAME == 'NLMCXR':
     EPOCHS = 50 # Start overfitting after 20 epochs
@@ -112,10 +113,10 @@ if __name__ == "__main__":
         KW_OUT = None
 
     elif MODEL_NAME == 'HiMrGn':
-        SOURCES = ['image']
+        SOURCES = ['image', 'findings', 'impression']
         TARGETS = ['findings','impression']
-        KW_SRC = ['image','caption','caption_length'] # kwargs of Classifier
-        KW_TGT = None
+        KW_SRC = ['image', 'findings', 'impression'] # kwargs of Classifier
+        KW_TGT = ['findings', 'impression']
         KW_OUT = None
         
     else:
@@ -123,7 +124,7 @@ if __name__ == "__main__":
         
     # --- Choose a Dataset ---
     if DATASET_NAME == 'MIMIC':
-        INPUT_SIZE = (256,256)
+        INPUT_SIZE = (224,224)
         MAX_VIEWS = 2
         NUM_LABELS = 114
         NUM_CLASSES = 2
@@ -169,7 +170,27 @@ if __name__ == "__main__":
         raise ValueError('Invalid BACKBONE_NAME')
 
     # --- Choose a Model ---
-    if MODEL_NAME == 'ClsGen' or MODEL_NAME == 'HiMrGn':
+    if MODEL_NAME == 'HiMrGn':
+        LR = 5e-4 # Fastest LR
+        # LR = 3e-4 # Fastest LR
+        WD = 1e-2 # Avoid overfitting with L2 regularization
+        DROPOUT = 0.1 # Avoid overfitting
+        NUM_EMBEDS = 256
+        FWD_DIM = 256
+        
+        NUM_HEADS = 8
+        NUM_LAYERS = 1
+
+        swin_transformer = SwinFeatureExtractor()
+
+        features_projector = DiseaseFeatureProjector(input_dim=512, num_diseases=NUM_DISEASES, feature_dim=512)
+
+        transformer_decoder = TextDecoder()
+
+        model = HiMrGn(image_encoder=swin_transformer, features_projector=features_projector, findings_decoder=transformer_decoder)
+        criterion = CELossTotal(ignore_index=3)
+
+    elif MODEL_NAME == 'ClsGen':
         LR = 5e-4 # Fastest LR
         # LR = 3e-4 # Fastest LR
         WD = 1e-2 # Avoid overfitting with L2 regularization
