@@ -77,9 +77,9 @@ MODEL_NAME = 'HiMrGn' # ClsGen / ClsGenInt / VisualTransformer / GumbelTransform
 
 if DATASET_NAME == 'MIMIC':
     EPOCHS = 100 # Start overfitting after 20 epochs
-    BATCH_SIZE =  32 if PHASE == 'TRAIN' else 32 # 192 # Fit 4 GPUs
+    BATCH_SIZE =  2 if PHASE == 'TRAIN' else 32 # 192 # Fit 4 GPUs
     MILESTONES = [25, 40, 55, 70, 85] # Reduce LR by 10 after reaching milestone epochs
-    NUM_DISEASES = 14
+    NUM_DISEASES = 1000
     
 elif DATASET_NAME == 'NLMCXR':
     EPOCHS = 50 # Start overfitting after 20 epochs
@@ -100,7 +100,7 @@ if __name__ == "__main__":
                 
     elif MODEL_NAME == 'VisualTransformer':
         SOURCES = ['image','caption']
-        TARGETS = ['caption']# ,'label']
+        TARGETS = ['caption']
         KW_SRC = ['image','caption'] # kwargs of Classifier
         KW_TGT = None
         KW_OUT = None
@@ -185,9 +185,20 @@ if __name__ == "__main__":
 
         features_projector = DiseaseFeatureProjector(input_dim=512, num_diseases=NUM_DISEASES, feature_dim=512)
 
-        transformer_decoder = TextDecoder()
+        findings_decoder = TextDecoder()
+        findings_generator = FindingsGenerator(findings_decoder)
 
-        model = HiMrGn(image_encoder=swin_transformer, features_projector=features_projector, findings_decoder=transformer_decoder)
+        co_attention_module = CoAttentionModule()
+
+        impression_decoder = TextDecoder()
+        impression_generator = ImpressionGenerator(impression_decoder)
+
+        model = HiMrGn(image_encoder=swin_transformer, 
+                       features_projector=features_projector, 
+                       findings_decoder=findings_generator, 
+                       co_attention_module=co_attention_module,
+                       impression_decoder=impression_generator)
+        
         criterion = CELossTotal(ignore_index=3)
 
     elif MODEL_NAME == 'ClsGen':

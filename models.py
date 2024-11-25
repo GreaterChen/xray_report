@@ -413,7 +413,7 @@ class DiseaseFeatureProjector(nn.Module):
         return F_v
     
 class TextDecoder(nn.Module):
-    def __init__(self, input_dim=512, hidden_dim=512, vocab_size=1000, num_layers=2, max_len=1000, pad_id=0, bos_id=1, eos_id=2):
+    def __init__(self, input_dim=512, hidden_dim=512, vocab_size=1000, num_layers=1, max_len=1000, bos_id=1, eos_id=2, pad_id=3):
         super(TextDecoder, self).__init__()
         self.embedding = nn.Embedding(vocab_size, hidden_dim)  # 词嵌入
         self.transformer_decoder = nn.TransformerDecoder(
@@ -528,22 +528,180 @@ class TextDecoder(nn.Module):
 
         return output, F_t
     
+class FindingsGenerator(nn.Module):
+    def __init__(self, text_decoder):
+        """
+        Findings Generator 封装 TextDecoder 实现。
+        Args:
+            text_decoder: 一个 TextDecoder 实例，用于解码器生成。
+        """
+        super(FindingsGenerator, self).__init__()
+        self.text_decoder = text_decoder
+
+    def forward(self, F_v, target_sequence=None):
+        """
+        Args:
+            F_v: 输入的视觉特征，形状 (B, N_v, C_v)。
+            target_sequence: 目标序列，形状 (B, max_len)，仅在训练时提供。
+        Returns:
+            output: 生成的词汇分布，形状 (B, max_len, vocab_size)。
+            F_t_decoded: 解码器的隐藏状态，形状 (B, max_len, hidden_dim)。
+        """
+        # 使用 TextDecoder 进行生成
+        output, F_t_decoded = self.text_decoder(F_v, target_sequence=target_sequence)
+
+        return output, F_t_decoded
+    
+class CoAttentionBlock(nn.Module):
+    def __init__(self, embed_dim=512, num_heads=8):
+        """
+        单个 Co-Attention Block 的实现，包含以下步骤：
+        1. 自注意力 (Self-Attention)
+        2. 标准 Cross-Attention (Cross-Attention-1)
+        3. 非对称 Cross-Attention (Cross-Attention-2)
+        Args:
+            embed_dim: 特征嵌入维度。
+            num_heads: 注意力头的数量。
+        """
+        super(CoAttentionBlock, self).__init__()
+        # 自注意力层
+        self.self_attn_text = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads)
+        self.self_attn_visual = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads)
+
+        # 标准 Cross-Attention 层
+        self.cross_attn_text_to_visual = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads)
+        self.cross_attn_visual_to_text = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads)
+
+        # 非对称 Cross-Attention 层
+        self.cross_attn_asym_text = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads)
+        self.cross_attn_asym_visual = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads)
+
+        # 残差连接和归一化层
+        self.norm_text1 = nn.LayerNorm(embed_dim)
+        self.norm_visual1 = nn.LayerNorm(embed_dim)
+        self.norm_text2 = nn.LayerNorm(embed_dim)
+        self.norm_visual2 = nn.LayerNorm(embed_dim)
+        self.norm_text3 = nn.LayerNorm(embed_dim)
+        self.norm_visual3 = nn.LayerNorm(embed_dim)
+
+    def forward(self, F_t, F_v):
+        """
+        Args:
+            F_t: 文本特征，形状 (B, N_t, C_t)。
+            F_v: 视觉特征，形状 (B, N_v, C_v)。
+        Returns:
+            F_t': 增强的文本特征，形状 (B, N_t, C_t)。
+            F_v': 增强的视觉特征，形状 (B, N_v, C_v)。
+        """
+        # 转置到 (seq_len, batch_size, embed_dim) 格式，符合 MultiheadAttention 要求
+        F_t = F_t.transpose(0, 1)  # (N_t, B, C_t)
+        F_v = F_v.transpose(0, 1)  # (N_v, B, C_v)
+
+        # Step 1: 自注意力
+        F_t1, _ = self.self_attn_text(F_t, F_t, F_t)  # 文本自注意力
+        F_t1 = self.norm_text1(F_t + F_t1)  # 残差连接 + 归一化
+
+        F_v1, _ = self.self_attn_visual(F_v, F_v, F_v)  # 视觉自注意力
+        F_v1 = self.norm_visual1(F_v + F_v1)  # 残差连接 + 归一化
+
+        # Step 2: 标准 Cross-Attention
+        F_t2, _ = self.cross_attn_visual_to_text(F_t1, F_v1, F_v1)  # 文本 -> 视觉
+        F_t2 = self.norm_text2(F_t1 + F_t2)  # 残差连接 + 归一化
+
+        F_v2, _ = self.cross_attn_text_to_visual(F_v1, F_t1, F_t1)  # 视觉 -> 文本
+        F_v2 = self.norm_visual2(F_v1 + F_v2)  # 残差连接 + 归一化
+
+        # Step 3: 非对称 Cross-Attention
+        F_t3, _ = self.cross_attn_asym_text(F_t2, F_t2, F_v2)  # Query 和 Key 是文本，Value 是视觉
+        F_t3 = self.norm_text3(F_t2 + F_t3)  # 残差连接 + 归一化
+
+        F_v3, _ = self.cross_attn_asym_visual(F_v2, F_v2, F_t2)  # Query 和 Key 是视觉，Value 是文本
+        F_v3 = self.norm_visual3(F_v2 + F_v3)  # 残差连接 + 归一化
+
+        # 转回 (B, seq_len, embed_dim) 格式
+        F_t3 = F_t3.transpose(0, 1)  # (B, N_t, C_t)
+        F_v3 = F_v3.transpose(0, 1)  # (B, N_v, C_v)
+
+        return F_t3, F_v3
+
+
+
+class CoAttentionModule(nn.Module):
+    def __init__(self, embed_dim=512, num_heads=8, num_blocks=6):
+        """
+        Co-Attention 模块，由多个 Co-Attention Block 组成。
+        Args:
+            embed_dim: 特征嵌入维度。
+            num_heads: 注意力头的数量。
+            num_blocks: Co-Attention Block 的数量。
+        """
+        super(CoAttentionModule, self).__init__()
+        self.blocks = nn.ModuleList([CoAttentionBlock(embed_dim=embed_dim, num_heads=num_heads) for _ in range(num_blocks)])
+
+    def forward(self, F_t, F_v):
+        """
+        Args:
+            F_t: 文本特征，形状 (B, N_t, C_t)。
+            F_v: 视觉特征，形状 (B, N_v, C_v)。
+        Returns:
+            F_t': 增强的文本特征，形状 (B, N_t, C_t)。
+            F_v': 增强的视觉特征，形状 (B, N_v, C_v)。
+        """
+        for block in self.blocks:
+            F_t, F_v = block(F_t, F_v)
+        return F_t, F_v
+
+class ImpressionGenerator(nn.Module):
+    def __init__(self, text_decoder):
+        """
+        Impression Generator 复用 TextDecoder 实现。
+        Args:
+            text_decoder: 一个 TextDecoder 实例，用于解码器生成。
+        """
+        super(ImpressionGenerator, self).__init__()
+        self.text_decoder = text_decoder
+
+    def forward(self, F_v_prime, F_t_prime, F_t, target_sequence=None):
+        """
+        Args:
+            F_v_prime: 增强的视觉特征 (B, N_v, C_v)。
+            F_t_prime: 增强的文本特征 (B, N_t, C_t)。
+            F_t: 原始的文本特征 (B, N_t, C_t)。
+            target_sequence: 目标序列 (B, max_len)，仅在训练时提供。
+        Returns:
+            output: 生成的词汇分布 (B, max_len, vocab_size)。
+            F_t_decoded: 解码过程中的隐藏状态 (B, max_len, hidden_dim)。
+        """
+        # 拼接 F_v', F_t', F_t -> memory
+        memory = torch.cat([F_v_prime, F_t_prime, F_t], dim=1)  # (B, N_v + 2 * N_t, C)
+
+        # 使用 TextDecoder 进行生成
+        output, _ = self.text_decoder(memory, target_sequence=target_sequence)
+
+        return output
+    
 
 class HiMrGn(nn.Module):
-    def __init__(self, image_encoder, features_projector, findings_decoder):
+    def __init__(self, image_encoder, features_projector, findings_decoder, co_attention_module, impression_decoder):
         super().__init__()
         self.image_encoder = image_encoder
         self.features_projector = features_projector
         self.findings_decoder = findings_decoder
+        self.co_attention_module = co_attention_module
+        self.impression_decoder = impression_decoder
         
-    def forward(self, image, vpos=None, findings=None, impression=None, threshold=0.15, bos_id=1, eos_id=2, pad_id=3, max_len=300, get_emb=False):
+    def forward(self, image, vpos=None, findings=None, impression=None, threshold=0.15, bos_id=1, eos_id=2, pad_id=3, max_len=1000, get_emb=False):
         x = self.image_encoder(image)   # (B, C)
 
         F_v = self.features_projector(x)    # (B, Nv, Cv)
 
-        findings, F_t = self.findings_decoder(F_v, findings)
+        findings, F_t = self.findings_decoder(F_v, findings)    # (B, max_len, vocab_size), (B, max_len, hidden_dim)         
 
-        return findings
+        F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)   # (B, max_len, hidden_dim), (B, Nv, Cv)      
+
+        impression = self.impression_decoder(F_v_prime, F_t_prime, F_t, target_sequence=impression) # (B, max_len, vocab_size)
+
+        return findings, impression
 
 
 class ClsGenInt(nn.Module):
