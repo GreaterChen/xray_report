@@ -193,11 +193,16 @@ if __name__ == "__main__":
         impression_decoder = TextDecoder()
         impression_generator = ImpressionGenerator(impression_decoder)
 
+        word_translator = WordTranslator(model_file_path="/mnt/chenlb/mimic/mimic_unigram_1000.model")
+        cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor(word_translator=word_translator)
+
+
         model = HiMrGn(image_encoder=swin_transformer, 
                        features_projector=features_projector, 
                        findings_decoder=findings_generator, 
                        co_attention_module=co_attention_module,
-                       impression_decoder=impression_generator)
+                       impression_decoder=impression_generator,
+                       cxr_bert_feature_extractor=cxr_bert_feature_extractor)
         
         criterion = CELossTotal(ignore_index=3)
 

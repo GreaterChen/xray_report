@@ -112,7 +112,6 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         # self.target_sections = ['FINDINGS:']
         self.target_sections = ['FINDINGS:', 'IMPRESSION:']
         self.vocab = spm.SentencePieceProcessor(model_file=os.path.join(directory, vocab_file))
-        self.vocab_file = vocab_file # Save it for subsets
 
         self.sources = sources # Choose which section as input
         self.targets = targets # Choose which section as output
