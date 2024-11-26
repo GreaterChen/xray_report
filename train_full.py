@@ -22,7 +22,7 @@ from tqdm import tqdm
 # --- Project Packages ---
 from utils import save, load, train, test, data_to_device, data_concatenate
 from datasets import NIHCXR, MIMIC, NLMCXR
-from losses import CELoss, CELossTotal, CELossTotalEval, CELossTransfer, CELossShift, CombinedLoss
+from losses import CombinedLoss
 from models import *
 from baselines.transformer.models import LSTM_Attn, Transformer, GumbelTransformer
 from baselines.rnn.models import ST
@@ -72,8 +72,8 @@ torch.manual_seed(seed=123)
 RELOAD = False # True / False
 PHASE = 'TRAIN' # TRAIN / TEST / INFER
 DATASET_NAME = 'MIMIC' # NIHCXR / NLMCXR / MIMIC
-BACKBONE_NAME = 'ResNet50' # ResNeSt50 / ResNet50 / DenseNet121
-MODEL_NAME = 'HiMrGn' # ClsGen / ClsGenInt / VisualTransformer / GumbelTransformer / HiMrGn
+BACKBONE_NAME = 'SwinT'
+MODEL_NAME = 'HiMrGn' # HiMrGn
 
 if DATASET_NAME == 'MIMIC':
     EPOCHS = 100 # Start overfitting after 20 epochs
@@ -152,23 +152,6 @@ if __name__ == "__main__":
     else:
         raise ValueError('Invalid DATASET_NAME')
 
-    # --- Choose a Backbone --- 
-    if BACKBONE_NAME == 'ResNeSt50':
-        torch.hub.list('zhanghang1989/ResNeSt', force_reload=True)
-        backbone = torch.hub.load('zhanghang1989/ResNeSt', 'resnest50', pretrained=True)
-        FC_FEATURES = 2048
-
-    elif BACKBONE_NAME == 'ResNet50':
-        backbone = models.resnet50(weights=ResNet50_Weights.DEFAULT)
-        FC_FEATURES = 2048
-        
-    elif BACKBONE_NAME == 'DenseNet121':
-        backbone = torch.hub.load('pytorch/vision:v0.5.0', 'densenet121', pretrained=True)
-        FC_FEATURES = 1024
-        
-    else:
-        raise ValueError('Invalid BACKBONE_NAME')
-
     # --- Choose a Model ---
     if MODEL_NAME == 'HiMrGn':
         LR = 5e-4 # Fastest LR
@@ -205,139 +188,6 @@ if __name__ == "__main__":
                        cxr_bert_feature_extractor=cxr_bert_feature_extractor)
         
         criterion = CombinedLoss().cuda()
-
-    elif MODEL_NAME == 'ClsGen':
-        LR = 5e-4 # Fastest LR
-        # LR = 3e-4 # Fastest LR
-        WD = 1e-2 # Avoid overfitting with L2 regularization
-        DROPOUT = 0.1 # Avoid overfitting
-        NUM_EMBEDS = 256
-        FWD_DIM = 256
-        
-        NUM_HEADS = 8
-        NUM_LAYERS = 1
-        
-        cnn = CNN(backbone, BACKBONE_NAME)
-        cnn = MVCNN(cnn)
-        tnn = TNN(embed_dim=NUM_EMBEDS, num_heads=NUM_HEADS, fwd_dim=FWD_DIM, dropout=DROPOUT, num_layers=NUM_LAYERS, num_tokens=VOCAB_SIZE, num_posits=POSIT_SIZE)
-        
-        # Not enough memory to run 8 heads and 12 layers, instead 1 head is enough
-        NUM_HEADS = 1
-        NUM_LAYERS = 12
-        
-        cls_model = Classifier(num_topics=NUM_LABELS, num_states=NUM_CLASSES, cnn=cnn, tnn=tnn, fc_features=FC_FEATURES, embed_dim=NUM_EMBEDS, num_heads=NUM_HEADS, dropout=DROPOUT)
-        gen_model = Generator(num_tokens=VOCAB_SIZE, num_posits=POSIT_SIZE, embed_dim=NUM_EMBEDS, num_heads=NUM_HEADS, fwd_dim=FWD_DIM, dropout=DROPOUT, num_layers=NUM_LAYERS)
-        
-        model = ClsGen(cls_model, gen_model, NUM_LABELS, NUM_EMBEDS)
-        criterion = CELossTotal(ignore_index=3)
-        
-    elif MODEL_NAME == 'ClsGenInt':
-        LR = 3e-5 # Slower LR to fine-tune the model (Open-I)
-        # LR = 3e-6 # Slower LR to fine-tune the model (MIMIC)
-        WD = 1e-2 # Avoid overfitting with L2 regularization
-        DROPOUT = 0.1 # Avoid overfitting
-        NUM_EMBEDS = 256
-        FWD_DIM = 256
-        
-        NUM_HEADS = 8
-        NUM_LAYERS = 1
-        
-        cnn = CNN(backbone, BACKBONE_NAME)
-        cnn = MVCNN(cnn)
-        tnn = TNN(embed_dim=NUM_EMBEDS, num_heads=NUM_HEADS, fwd_dim=FWD_DIM, dropout=DROPOUT, num_layers=NUM_LAYERS, num_tokens=VOCAB_SIZE, num_posits=POSIT_SIZE)
-        
-        # Not enough memory to run 8 heads and 12 layers, instead 1 head is enough
-        NUM_HEADS = 1
-        NUM_LAYERS = 12
-        
-        cls_model = Classifier(num_topics=NUM_LABELS, num_states=NUM_CLASSES, cnn=cnn, tnn=tnn, fc_features=FC_FEATURES, embed_dim=NUM_EMBEDS, num_heads=NUM_HEADS, dropout=DROPOUT)
-        gen_model = Generator(num_tokens=VOCAB_SIZE, num_posits=POSIT_SIZE, embed_dim=NUM_EMBEDS, num_heads=NUM_HEADS, fwd_dim=FWD_DIM, dropout=DROPOUT, num_layers=NUM_LAYERS)
-        
-        clsgen_model = ClsGen(cls_model, gen_model, NUM_LABELS, NUM_EMBEDS)
-        clsgen_model = nn.DataParallel(clsgen_model).cuda()
-        
-        if not RELOAD:
-            checkpoint_path_from = 'checkpoints/2022-12-29_22:53:08_{}_ClsGen_{}_{}.pt'.format(DATASET_NAME, BACKBONE_NAME, COMMENT)
-            last_epoch, (best_metric, test_metric) = load(checkpoint_path_from, clsgen_model)
-            print('Reload From: {} | Last Epoch: {} | Validation Metric: {} | Test Metric: {}'.format(checkpoint_path_from, last_epoch, best_metric, test_metric))
-        
-        # Initialize the Interpreter module
-        NUM_HEADS = 8
-        NUM_LAYERS = 1
-        
-        tnn = TNN(embed_dim=NUM_EMBEDS, num_heads=NUM_HEADS, fwd_dim=FWD_DIM, dropout=DROPOUT, num_layers=NUM_LAYERS, num_tokens=VOCAB_SIZE, num_posits=POSIT_SIZE)
-        int_model = Classifier(num_topics=NUM_LABELS, num_states=NUM_CLASSES, cnn=None, tnn=tnn, embed_dim=NUM_EMBEDS, num_heads=NUM_HEADS, dropout=DROPOUT)
-        int_model = nn.DataParallel(int_model).cuda()
-        
-        if not RELOAD:
-            checkpoint_path_from = 'checkpoints/{}_Transformer_MaxView2_NumLabel{}.pt'.format(DATASET_NAME, NUM_LABELS)
-            last_epoch, (best_metric, test_metric) = load(checkpoint_path_from, int_model)
-            print('Reload From: {} | Last Epoch: {} | Validation Metric: {} | Test Metric: {}'.format(checkpoint_path_from, last_epoch, best_metric, test_metric))
-        
-        model = ClsGenInt(clsgen_model.module.cpu(), int_model.module.cpu(), freeze_evaluator=True)
-        criterion = CELossTotalEval(ignore_index=3)
-        
-    elif MODEL_NAME == 'VisualTransformer':
-        # Clinical Coherent X-ray Report (Justin et. al.) - No Fine-tune
-        LR = 5e-5
-        WD = 1e-2 # Avoid overfitting with L2 regularization
-        DROPOUT = 0.1 # Avoid overfitting
-        NUM_EMBEDS = 256
-        NUM_HEADS = 8
-        FWD_DIM = 4096
-        NUM_LAYERS_ENC = 1
-        NUM_LAYERS_DEC = 6
-        
-        cnn = CNN(backbone, BACKBONE_NAME)
-        cnn = MVCNN(cnn)
-        model = Transformer(image_encoder=cnn, num_tokens=VOCAB_SIZE, num_posits=POSIT_SIZE, 
-                            fc_features=FC_FEATURES, embed_dim=NUM_EMBEDS, num_heads=NUM_HEADS, fwd_dim=FWD_DIM, 
-                            dropout=DROPOUT, num_layers_enc=NUM_LAYERS_ENC, num_layers_dec=NUM_LAYERS_DEC, freeze_encoder=True)
-        criterion = CELossShift(ignore_index=3)
-        
-    elif MODEL_NAME == 'GumbelTransformer':
-        # Clinical Coherent X-ray Report (Justin et. al.)        
-        LR = 5e-5
-        WD = 1e-2 # Avoid overfitting with L2 regularization
-        DROPOUT = 0.1 # Avoid overfitting
-        NUM_EMBEDS = 256
-        NUM_HEADS = 8
-        FWD_DIM = 4096
-        NUM_LAYERS_ENC = 1
-        NUM_LAYERS_DEC = 6
-        
-        cnn = CNN(backbone, BACKBONE_NAME)
-        cnn = MVCNN(cnn)
-        transformer = Transformer(image_encoder=cnn, num_tokens=VOCAB_SIZE, num_posits=POSIT_SIZE, 
-                                  fc_features=FC_FEATURES, embed_dim=NUM_EMBEDS, num_heads=NUM_HEADS, fwd_dim=FWD_DIM, 
-                                  dropout=DROPOUT, num_layers_enc=NUM_LAYERS_ENC, num_layers_dec=NUM_LAYERS_DEC, freeze_encoder=True)
-        transformer = nn.DataParallel(transformer).cuda()
-        pretrained_from = 'checkpoints/{}_{}_{}_{}.pt'.format(DATASET_NAME,'VisualTransformer',BACKBONE_NAME,COMMENT)
-        last_epoch, (best_metric, test_metric) = load(pretrained_from, transformer)
-        print('Reload From: {} | Last Epoch: {} | Validation Metric: {} | Test Metric: {}'.format(pretrained_from, last_epoch, best_metric, test_metric))
-        
-        NUM_EMBEDS = 256
-        HIDDEN_SIZE = 128
-        
-        pretrained_from = 'checkpoints/{}_{}_{}_NumLabel{}.pt'.format(DATASET_NAME,'LSTM','MaxView2',NUM_LABELS)
-        diff_chexpert = LSTM_Attn(num_tokens=VOCAB_SIZE, embed_dim=NUM_EMBEDS, hidden_size=HIDDEN_SIZE, num_topics=NUM_LABELS, num_states=NUM_CLASSES, dropout=DROPOUT)
-        diff_chexpert = nn.DataParallel(diff_chexpert).cuda()
-        last_epoch, (best_metric, test_metric) = load(pretrained_from, diff_chexpert)
-        print('Reload From: {} | Last Epoch: {} | Validation Metric: {} | Test Metric: {}'.format(pretrained_from, last_epoch, best_metric, test_metric))
-        
-        model = GumbelTransformer(transformer.module.cpu(), diff_chexpert.module.cpu())
-        criterion = CELossTotal(ignore_index=3)
-        
-    elif MODEL_NAME == 'ST':
-        KW_SRC = ['image', 'caption', 'caption_length']
-        
-        LR = 5e-5
-        NUM_EMBEDS = 256
-        HIDDEN_SIZE = 128
-        DROPOUT = 0.1
-        
-        # model = ST(cnn, num_tokens=VOCAB_SIZE, fc_features=FC_FEATURES, embed_dim=NUM_EMBEDS, hidden_size=HIDDEN_SIZE, dropout=DROPOUT, freeze_encoder=True)
-        # criterion = CELossShift(ignore_index=3)
         
     else:
         raise ValueError('Invalid MODEL_NAME')
