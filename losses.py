@@ -94,3 +94,56 @@ class CELossTransfer(nn.Module):
 
 	def forward(self, output, target):
 		return self.CELossShift(output[0], target[0]) # + self.CELoss(output[1], target[1])
+	
+
+
+class ContrastiveLearningLoss(nn.Module):
+    def __init__(self, feature_dim=768, projection_dim=128, hidden_dim=256):
+        """
+        对比学习损失模块，基于 SimSiam。
+        Args:
+            feature_dim: 输入特征维度 (F_F 和 F_I)。
+            projection_dim: 投影空间维度。
+            hidden_dim: 预测 MLP 的隐藏层维度。
+        """
+        super(ContrastiveLearningLoss, self).__init__()
+        # Projection MLP
+        self.projection_mlp = nn.Sequential(
+            nn.Linear(feature_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, projection_dim)
+        )
+        # Prediction MLP
+        self.prediction_mlp = nn.Sequential(
+            nn.Linear(projection_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, projection_dim)
+        )
+
+    def forward(self, F_F, F_I):
+        """
+        Args:
+            F_F: Findings 的特征，形状 (B, feature_dim)。
+            F_I: Impression 的特征，形状 (B, feature_dim)。
+        Returns:
+            loss_sim: 对比学习损失 (标量)。
+        """
+        # Step 1: Projection
+        Z_F = self.projection_mlp(F_F)  # (B, projection_dim)
+        Z_I = self.projection_mlp(F_I)  # (B, projection_dim)
+
+        # Step 2: Prediction
+        P_F = self.prediction_mlp(Z_F)  # (B, projection_dim)
+        P_I = self.prediction_mlp(Z_I)  # (B, projection_dim)
+
+        # Step 3: Normalize features for cosine similarity
+        Z_F = F.normalize(Z_F, dim=-1)
+        Z_I = F.normalize(Z_I, dim=-1)
+        P_F = F.normalize(P_F, dim=-1)
+        P_I = F.normalize(P_I, dim=-1)
+
+        # Step 4: Cosine Similarity Loss
+        loss_sim = (- F.cosine_similarity(P_F, Z_I.detach(), dim=-1).mean() \
+            		- F.cosine_similarity(P_I, Z_F.detach(), dim=-1).mean()) / 2
+
+        return loss_sim

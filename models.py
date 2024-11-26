@@ -446,7 +446,7 @@ class TextDecoder(nn.Module):
         super(TextDecoder, self).__init__()
         self.embedding = nn.Embedding(vocab_size, hidden_dim)  # 词嵌入
         self.transformer_decoder = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(d_model=hidden_dim, nhead=8), num_layers=num_layers)
+            nn.TransformerDecoderLayer(d_model=hidden_dim, nhead=8), num_layers=num_layers) 
         self.fc_out = nn.Linear(hidden_dim, vocab_size)  # 输出词汇分布
         self.hidden_dim = hidden_dim
         self.max_len = max_len
