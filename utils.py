@@ -95,7 +95,7 @@ def train(data_loader, model, optimizer, criterion, scheduler=None, device='cpu'
 			with torch.cuda.amp.autocast():
 				output = data_distributor(model, source)
 				output = args_to_kwargs(output, kw_out)
-				loss = criterion(output, target)
+				loss, detailed_loss = criterion(output, target)
 				
 			running_loss += loss.item()
 			prog_bar.set_description('Loss: {}'.format(running_loss/(i+1)))

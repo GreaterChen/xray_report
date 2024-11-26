@@ -147,3 +147,90 @@ class ContrastiveLearningLoss(nn.Module):
             		- F.cosine_similarity(P_I, Z_F.detach(), dim=-1).mean()) / 2
 
         return loss_sim
+	
+
+class SequenceCrossEntropyLoss(nn.Module):
+    def __init__(self, pad_id=3):
+        """
+        计算生成序列的交叉熵损失。
+        Args:
+            pad_id: 填充值的索引，用于忽略填充标记的损失。
+        """
+        super(SequenceCrossEntropyLoss, self).__init__()
+        self.pad_id = pad_id
+
+    def forward(self, predictions, targets):
+        """
+        Args:
+            predictions: 模型输出的词汇分布概率，形状 (B, seq_len, vocab_size)。
+            targets: 目标序列，形状 (B, seq_len)。
+        Returns:
+            loss: 归一化的交叉熵损失 (标量)。
+        """
+        # 将预测的概率分布展平，适应交叉熵损失的输入
+        batch_size, seq_len, vocab_size = predictions.size()
+        predictions = predictions.view(-1, vocab_size)  # (B * seq_len, vocab_size)
+        targets = targets.view(-1)  # (B * seq_len)
+
+        # 忽略填充标记的损失
+        loss = F.cross_entropy(predictions, targets, ignore_index=self.pad_id, reduction="mean")
+        return loss
+	
+class CombinedLoss(nn.Module):
+    def __init__(self, pad_id=3, feature_dim=768, projection_dim=128, hidden_dim=256, lambda_contrastive=1.0):
+        """
+        综合损失函数，包括：
+        1. Findings 和 Impression 的交叉熵损失。
+        2. Findings 和 Impression 特征的对比学习损失。
+        
+        Args:
+            pad_id: 填充值的索引，用于忽略填充标记的交叉熵损失。
+            feature_dim: 输入特征维度 (F_F 和 F_I)。
+            projection_dim: 投影空间维度，用于对比学习。
+            hidden_dim: 预测 MLP 的隐藏层维度。
+            lambda_contrastive: 对比损失的权重因子。
+        """
+        super(CombinedLoss, self).__init__()
+        self.cross_entropy_loss = SequenceCrossEntropyLoss(pad_id=pad_id)
+        self.contrastive_loss = ContrastiveLearningLoss(feature_dim=feature_dim, 
+                                                        projection_dim=projection_dim, 
+                                                        hidden_dim=hidden_dim)
+        self.lambda_contrastive = lambda_contrastive
+
+    def forward(self, output, targets):
+        """
+        Args:
+            output: 模型输出，包含：
+                - findings: 模型生成的 findings 概率分布 (B, seq_len, vocab_size)。
+                - impression: 模型生成的 impression 概率分布 (B, seq_len, vocab_size)。
+                - F_F: Findings 的特征 (B, feature_dim)。
+                - F_I: Impression 的特征 (B, feature_dim)。
+            targets: 目标值，包含：
+                - findings_gt: Findings 的目标序列 (B, seq_len)。
+                - impression_gt: Impression 的目标序列 (B, seq_len)。
+        
+        Returns:
+            total_loss: 综合损失 (标量)。
+            losses: 包含各项损失的字典。
+        """
+        findings, impression, F_F, F_I = output['findings'], output['impression'], output['F_F'], output['F_I']  # 解包 output
+        findings_gt, impression_gt = targets['findings'], targets['impression']  # 解包 targets
+
+        # 计算交叉熵损失
+        findings_loss = self.cross_entropy_loss(findings, findings_gt)  # Findings 的交叉熵损失
+        impression_loss = self.cross_entropy_loss(impression, impression_gt)  # Impression 的交叉熵损失
+
+        # 计算对比学习损失
+        contrastive_loss = self.contrastive_loss(F_F, F_I)
+
+        # 综合损失
+        total_loss = findings_loss + impression_loss + self.lambda_contrastive * contrastive_loss
+
+        # 返回总损失和各项损失
+        losses = {
+            "findings_loss": findings_loss,
+            "impression_loss": impression_loss,
+            "contrastive_loss": contrastive_loss,
+            "total_loss": total_loss
+        }
+        return total_loss, losses

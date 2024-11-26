@@ -111,8 +111,8 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         self.source_sections = []
         # self.target_sections = ['FINDINGS:']
         self.target_sections = ['FINDINGS:', 'IMPRESSION:']
+        self.vocab_file=vocab_file
         self.vocab = spm.SentencePieceProcessor(model_file=os.path.join(directory, vocab_file))
-
         self.sources = sources # Choose which section as input
         self.targets = targets # Choose which section as output
         self.max_views = max_views
@@ -208,7 +208,6 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                 targets.append(findings)
             elif self.targets[i] == 'impression':
                 targets.append(impression)
-
                 
         return sources if len(sources) > 1 else sources[0], targets if len(targets) > 1 else targets[0]
 

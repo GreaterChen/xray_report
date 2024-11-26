@@ -782,7 +782,12 @@ class HiMrGn(nn.Module):
         F_I = self.cxr_bert_feature_extractor(impression)   # (B, 768)
 
 
-        return findings, impression
+        return {
+            "findings": findings, 
+            "impression": impression, 
+            "F_F": F_F, 
+            "F_I": F_I
+        }
 
 
 class ClsGenInt(nn.Module):

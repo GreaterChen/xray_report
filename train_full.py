@@ -22,7 +22,7 @@ from tqdm import tqdm
 # --- Project Packages ---
 from utils import save, load, train, test, data_to_device, data_concatenate
 from datasets import NIHCXR, MIMIC, NLMCXR
-from losses import CELoss, CELossTotal, CELossTotalEval, CELossTransfer, CELossShift
+from losses import CELoss, CELossTotal, CELossTotalEval, CELossTransfer, CELossShift, CombinedLoss
 from models import *
 from baselines.transformer.models import LSTM_Attn, Transformer, GumbelTransformer
 from baselines.rnn.models import ST
@@ -204,7 +204,7 @@ if __name__ == "__main__":
                        impression_decoder=impression_generator,
                        cxr_bert_feature_extractor=cxr_bert_feature_extractor)
         
-        criterion = CELossTotal(ignore_index=3)
+        criterion = CombinedLoss().cuda()
 
     elif MODEL_NAME == 'ClsGen':
         LR = 5e-4 # Fastest LR
