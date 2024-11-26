@@ -8,12 +8,12 @@ import pandas as pd
 import torch
 import torch.utils.data as data
 import torchvision.transforms as transforms
-
 # --- Helper packages ---
 from random import shuffle
 import sentencepiece as spm
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
+from transformers import AutoTokenizer
 
 # --- Datasets ---
 class NIHCXR(data.Dataset): # Chest X-Ray 14 Dataset
@@ -103,16 +103,17 @@ class NIHCXR(data.Dataset): # Chest X-Ray 14 Dataset
         return train_dataset, val_dataset, test_dataset
 
 class MIMIC(data.Dataset): # MIMIC-CXR Dataset
-    def __init__(self, directory, input_size=(256,256), random_transform=True,
-                view_pos=['AP', 'PA', 'LATERAL'], max_views=2, sources=['image','history'], targets=['label'], 
-                max_len=1000, vocab_file='mimic_unigram_1000.model'):
+    def __init__(self, directory, input_size=(224,224), random_transform=True,
+                view_pos=['AP'], max_views=2, sources=['image','history'], targets=['label'], 
+                max_len=512, model_name='microsoft/BiomedVLP-CXR-BERT-specialized'):
 
         # self.source_sections = ['INDICATION:', 'HISTORY:', 'CLINICAL HISTORY:', 'REASON FOR EXAM:', 'REASON FOR EXAMINATION:', 'CLINICAL INFORMATION:', 'CLINICAL INDICATION:', 'PATIENT HISTORY:']
         self.source_sections = []
         # self.target_sections = ['FINDINGS:']
         self.target_sections = ['FINDINGS:', 'IMPRESSION:']
-        self.vocab_file=vocab_file
-        self.vocab = spm.SentencePieceProcessor(model_file=os.path.join(directory, vocab_file))
+        # 使用与 CXR-BERT 一致的 tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        
         self.sources = sources # Choose which section as input
         self.targets = targets # Choose which section as output
         self.max_views = max_views
@@ -175,23 +176,27 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         
         source_info = []
 
-        if 'FINDINGS:' in info.keys():
-            findings = info['FINDINGS:']
-        else:
-            findings = ''
-        
-        encoded_findings = [self.vocab.bos_id()] + self.vocab.encode(findings) + [self.vocab.eos_id()]
-        findings = np.ones(self.max_len, dtype=np.int64) * self.vocab.pad_id()
-        findings[:min(len(encoded_findings), self.max_len)] = encoded_findings[:min(len(encoded_findings), self.max_len)]
+        # 获取特殊字符的编码
+        cls_token_id = self.tokenizer.cls_token_id
+        sep_token_id = self.tokenizer.sep_token_id
+        pad_token_id = self.tokenizer.pad_token_id
+        bos_token_id = self.tokenizer.bos_token_id  # 如果有 BOS 特殊符号
+        eos_token_id = self.tokenizer.eos_token_id  # 如果有 EOS 特殊符号
 
+        # 获取 FINDINGS 和 IMPRESSION
+        findings = info.get('FINDINGS:', '')
+        impression = info.get('IMPRESSION:', '')
 
-        if 'IMPRESSION:' in info.keys():
-            impression = info['IMPRESSION:']
-        else:
-            impression = ''
-        encoded_impression = [self.vocab.bos_id()] + self.vocab.encode(impression) + [self.vocab.eos_id()]
-        impression = np.ones(self.max_len, dtype=np.int64) * self.vocab.pad_id()
-        impression[:min(len(encoded_impression), self.max_len)] = encoded_impression[:min(len(encoded_impression), self.max_len)]
+        # 使用 CXR-BERT tokenizer 对 FINDINGS 和 IMPRESSION 进行编码
+        encoded_findings = self.tokenizer.encode(findings, add_special_tokens=True, max_length=self.max_len, truncation=True, padding='max_length')
+        encoded_impression = self.tokenizer.encode(impression, add_special_tokens=True, max_length=self.max_len, truncation=True, padding='max_length')
+
+        findings = np.array(encoded_findings, dtype=np.int64)
+        impression = np.array(encoded_impression, dtype=np.int64)
+
+        # 将 FINDINGS 和 IMPRESSION 填充到最大长度
+        findings = np.pad(findings, (0, self.max_len - len(findings)), constant_values=self.tokenizer.pad_token_id)
+        impression = np.pad(impression, (0, self.max_len - len(impression)), constant_values=self.tokenizer.pad_token_id)
 
         target_info = []
 
@@ -313,7 +318,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                 if ('p'+pid,'s'+sid) in self.img_captions:
                     test_file.write('p' + pid + '/' + 's' + sid + '\n')
 
-    def get_subsets(self, pvt=0.9, seed=0, generate_splits=True, debug_mode=False, train_phase=True):
+    def get_subsets(self, pvt=0.9, seed=0, generate_splits=False, debug_mode=False, train_phase=True):
         if generate_splits:
             self.__generate_splits(seed=0)
             print('New splits generated')
@@ -332,17 +337,17 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
 
         train_dataset = MIMIC(self.dir, self.input_size, self.random_transform, 
                               self.view_pos, self.max_views, self.sources, self.targets, 
-                              self.max_len, self.vocab_file)
+                              self.max_len)
         train_dataset.idx_pidsid = [(pid,sid) for pid,sid in train_files[train_indices]] if not debug_mode else [(pid,sid) for pid,sid in train_files[train_indices]][:10000]
         
         val_dataset = MIMIC(self.dir, self.input_size, False, 
                             self.view_pos, self.max_views, self.sources, self.targets, 
-                            self.max_len, self.vocab_file)
+                            self.max_len)
         val_dataset.idx_pidsid = [(pid,sid) for pid,sid in train_files[val_indices]] if not debug_mode else [(pid,sid) for pid,sid in train_files[val_indices]][:1000]
 
         test_dataset = MIMIC(self.dir, self.input_size, False, 
                             self.view_pos, self.max_views, self.sources, self.targets, 
-                            self.max_len, self.vocab_file)
+                            self.max_len)
         test_dataset.idx_pidsid = [(pid,sid) for pid,sid in test_files] if not debug_mode else [(pid,sid) for pid,sid in test_files][:1000]
 
         # Use only a subset to make the model run quickly

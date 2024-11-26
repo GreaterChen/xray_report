@@ -79,7 +79,6 @@ if DATASET_NAME == 'MIMIC':
     EPOCHS = 100 # Start overfitting after 20 epochs
     BATCH_SIZE =  2 if PHASE == 'TRAIN' else 32 # 192 # Fit 4 GPUs
     MILESTONES = [25, 40, 55, 70, 85] # Reduce LR by 10 after reaching milestone epochs
-    NUM_DISEASES = 1000
     
 elif DATASET_NAME == 'NLMCXR':
     EPOCHS = 50 # Start overfitting after 20 epochs
@@ -128,11 +127,21 @@ if __name__ == "__main__":
         MAX_VIEWS = 2
         NUM_LABELS = 114
         NUM_CLASSES = 2
+        VIEW_POS = ['AP']
         
-        dataset = MIMIC('/mnt/chenlb/mimic/', INPUT_SIZE, view_pos=['AP','PA','LATERAL'], max_views=MAX_VIEWS, sources=SOURCES, targets=TARGETS)
-        train_data, val_data, test_data = dataset.get_subsets(pvt=0.9, seed=0, generate_splits=True, debug_mode=False, train_phase=(PHASE == 'TRAIN'))
+        dataset = MIMIC('/mnt/chenlb/mimic/', INPUT_SIZE, view_pos=VIEW_POS, max_views=MAX_VIEWS, sources=SOURCES, targets=TARGETS)
+        train_data, val_data, test_data = dataset.get_subsets(seed=123)
         
-        VOCAB_SIZE = len(dataset.vocab)
+        # if not os.path.exists('/home/chenlb/xray_report_generation/checkpoints/train_data.pt'):
+        #     torch.save(train_data, '/home/chenlb/xray_report_generation/checkpoints/train_data.pt')
+        #     torch.save(val_data, '/home/chenlb/xray_report_generation/checkpoints/val_data.pt')
+        #     torch.save(test_data, '/home/chenlb/xray_report_generation/checkpoints/test_data.pt')
+        # else:
+        #     train_data = torch.load('/home/chenlb/xray_report_generation/checkpoints/train_data.pt')
+        #     val_data = torch.load('/home/chenlb/xray_report_generation/checkpoints/val_data.pt')
+        #     test_data = torch.load('/home/chenlb/xray_report_generation/checkpoints/test_data.pt')
+
+        VOCAB_SIZE = dataset.tokenizer.vocab_size
         POSIT_SIZE = dataset.max_len
         COMMENT = 'MaxView{}_NumLabel{}_{}History'.format(MAX_VIEWS, NUM_LABELS, 'No' if 'history' not in SOURCES else '')
             
@@ -166,7 +175,7 @@ if __name__ == "__main__":
 
         swin_transformer = SwinFeatureExtractor()
 
-        features_projector = DiseaseFeatureProjector(input_dim=512, num_diseases=NUM_DISEASES, feature_dim=512)
+        features_projector = DiseaseFeatureProjector()
 
         findings_decoder = TextDecoder()
         findings_generator = FindingsGenerator(findings_decoder)
@@ -176,8 +185,8 @@ if __name__ == "__main__":
         impression_decoder = TextDecoder()
         impression_generator = ImpressionGenerator(impression_decoder)
 
-        word_translator = WordTranslator(model_file_path="/mnt/chenlb/mimic/mimic_unigram_1000.model")
-        cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor(word_translator=word_translator)
+        # word_translator = WordTranslator(model_file_path="/mnt/chenlb/mimic/mimic_unigram_1000.model")
+        cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor()
 
 
         model = HiMrGn(image_encoder=swin_transformer, 
@@ -193,9 +202,9 @@ if __name__ == "__main__":
         raise ValueError('Invalid MODEL_NAME')
     
     # --- Main program ---
-    train_loader = data.DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True, num_workers=16, drop_last=True)
-    val_loader = data.DataLoader(val_data, batch_size=BATCH_SIZE, shuffle=False, num_workers=16)
-    test_loader = data.DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=False, num_workers=16)
+    train_loader = data.DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, drop_last=True)
+    val_loader = data.DataLoader(val_data, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
+    test_loader = data.DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
 
     model = nn.DataParallel(model).cuda()
     optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=LR, weight_decay=WD)

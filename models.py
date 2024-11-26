@@ -8,30 +8,36 @@ import sentencepiece as spm
 import math
         
 class CXR_BERT_FeatureExtractor(nn.Module):
-    def __init__(self, word_translator, model_name='microsoft/BiomedVLP-CXR-BERT-specialized', device='cuda',):
+    def __init__(self, model_name='microsoft/BiomedVLP-CXR-BERT-specialized', device='cuda'):
         super(CXR_BERT_FeatureExtractor, self).__init__()
         self.device = device
         # 加载预训练的 CXR-BERT 模型和对应的分词器
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(self.device)
         self.model.eval()  # 设置模型为评估模式
-        self.word_translator = word_translator
 
     def forward(self, inputs):
         """
-        texts: 输入的文本列表，每个元素为一个字符串
+        inputs: 输入的文本概率列表，形状为 (B, seq_len, vocab_size)
         返回:
         features: 文本特征张量，形状为 (B, hidden_size)
         """
-        # 使用origin的映射方式输出文本
-        texts = self.word_translator.decode(inputs)
+        # 从概率分布中选择每个位置最大概率的 token ID
+        # 通过 torch.argmax 获取每个序列位置最可能的 token
+        token_ids = torch.argmax(inputs, dim=-1)  # 选择每个位置最大概率的 token ID，形状为 (B, seq_len)
+        
+        # 使用 tokenizer 对 token IDs 进行解码
+        texts = [self.tokenizer.decode(token_id, skip_special_tokens=True) for token_id in token_ids]
+        
         # 对输入文本进行编码
-        inputs = self.tokenizer(texts, max_length=1000, padding=True, truncation=True, return_tensors="pt").to(self.device)
+        inputs = self.tokenizer(texts, max_length=512, padding=True, truncation=True, return_tensors="pt").to(self.device)
+        
         with torch.no_grad():
             outputs = self.model(**inputs)
             # 获取 [CLS] 标记的嵌入表示
             cls_embeddings = outputs.last_hidden_state[:, 0, :]
-        return cls_embeddings
+        
+        return cls_embeddings, texts
 
 
 class SwinFeatureExtractor(nn.Module):
@@ -69,7 +75,7 @@ class SwinFeatureExtractor(nn.Module):
         return fv
     
 class DiseaseFeatureProjector(nn.Module):
-    def __init__(self, input_dim, num_diseases, feature_dim):
+    def __init__(self, input_dim=512, num_diseases=512, feature_dim=512):
         """
         Args:
             input_dim: 输入视觉特征 x 的维度（Swin Transformer 输出的维度 C）。
@@ -101,17 +107,22 @@ class DiseaseFeatureProjector(nn.Module):
         return F_v
     
 class TextDecoder(nn.Module):
-    def __init__(self, input_dim=512, hidden_dim=512, vocab_size=1000, num_layers=1, max_len=1000, bos_id=1, eos_id=2, pad_id=3):
+    def __init__(self, tokenizer_model_name='microsoft/BiomedVLP-CXR-BERT-specialized', input_dim=512, hidden_dim=512, num_head=8, num_layers=1, max_len=512):
         super(TextDecoder, self).__init__()
-        self.embedding = nn.Embedding(vocab_size, hidden_dim)  # 词嵌入
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name, trust_remote_code=True)  # 使用 CXR-BERT 的 tokenizer
+        self.vocab_size = self.tokenizer.vocab_size
+        self.embedding = nn.Embedding(self.vocab_size, hidden_dim)  # 词嵌入
         self.transformer_decoder = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(d_model=hidden_dim, nhead=8), num_layers=num_layers) 
-        self.fc_out = nn.Linear(hidden_dim, vocab_size)  # 输出词汇分布
+            nn.TransformerDecoderLayer(d_model=hidden_dim, nhead=num_head), num_layers=num_layers
+        ) 
+        self.fc_out = nn.Linear(hidden_dim, self.vocab_size)  # 输出词汇分布
         self.hidden_dim = hidden_dim
         self.max_len = max_len
-        self.pad_id = pad_id
-        self.bos_id = bos_id
-        self.eos_id = eos_id
+
+        # 获取 CXR-BERT 特殊标记
+        self.pad_id = self.tokenizer.pad_token_id
+        self.bos_id = self.tokenizer.cls_token_id  # 使用 CLS 作为 BOS
+        self.eos_id = self.tokenizer.sep_token_id  # 使用 SEP 作为 EOS
 
         # 生成 Sinusoidal 位置编码
         self.register_buffer("positional_encoding", self._get_sinusoidal_encoding(max_len, hidden_dim))
@@ -119,11 +130,6 @@ class TextDecoder(nn.Module):
     def _get_sinusoidal_encoding(self, max_len, d_model):
         """
         创建 Sinusoidal 位置编码。
-        Args:
-            max_len: 最大序列长度。
-            d_model: 隐藏层维度。
-        Returns:
-            position_encoding: 形状 (max_len, d_model)
         """
         position = torch.arange(0, max_len).unsqueeze(1)  # (max_len, 1)
         div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))  # (d_model // 2)
@@ -368,54 +374,6 @@ class ImpressionGenerator(nn.Module):
 
         return output
     
-class WordTranslator:
-    def __init__(self, model_file_path):
-        """
-        初始化 TextDecoder 类。
-
-        参数：
-        - model_file_path (str): SentencePiece 模型文件的路径。
-        """
-        if not os.path.exists(model_file_path):
-            raise FileNotFoundError(f"模型文件 {model_file_path} 不存在。")
-        
-        self.vocab = spm.SentencePieceProcessor(model_file=model_file_path)
-        self.pad_id = self.vocab.pad_id()
-        self.bos_id = self.vocab.bos_id()
-        self.eos_id = self.vocab.eos_id()
-
-    def decode(self, result_findings):
-        """
-        将模型输出的结果映射回文本。
-
-        参数：
-        - result_findings (torch.Tensor): 模型的输出，形状为 (batch_size, seq_len, vocab_size)。
-
-        返回：
-        - decoded_texts (list): 解码后的文本列表。
-        """
-        if not isinstance(result_findings, torch.Tensor):
-            raise TypeError("输入的 result_findings 必须是 torch.Tensor 类型。")
-        
-        if result_findings.dim() != 3:
-            raise ValueError("输入的 result_findings 必须是三维张量，形状为 (batch_size, seq_len, vocab_size)。")
-        
-        # 获取每个时间步的预测标记 ID
-        predicted_ids = torch.argmax(result_findings, dim=-1)  # 形状为 (batch_size, seq_len)
-
-        decoded_texts = []
-        for ids in predicted_ids:
-            # 将 Tensor 转换为列表
-            ids = ids.tolist()
-            # 移除特殊标记
-            ids = [id for id in ids if id not in (self.pad_id, self.bos_id, self.eos_id)]
-            # 解码为文本
-            text = self.vocab.decode(ids)
-            decoded_texts.append(text)
-        
-        return decoded_texts
-    
-
 class HiMrGn(nn.Module):
     def __init__(self, image_encoder, features_projector, findings_decoder, co_attention_module, impression_decoder, cxr_bert_feature_extractor):
         super().__init__()
@@ -426,7 +384,7 @@ class HiMrGn(nn.Module):
         self.impression_decoder = impression_decoder
         self.cxr_bert_feature_extractor = cxr_bert_feature_extractor
         
-    def forward(self, image, vpos=None, findings=None, impression=None, threshold=0.15, bos_id=1, eos_id=2, pad_id=3, max_len=1000, get_emb=False):
+    def forward(self, image, vpos=None, findings=None, impression=None):
         x = self.image_encoder(image)   # (B, C)
 
         F_v = self.features_projector(x)    # (B, Nv, Cv)
@@ -437,8 +395,8 @@ class HiMrGn(nn.Module):
 
         impression = self.impression_decoder(F_v_prime, F_t_prime, F_t, target_sequence=impression) # (B, max_len, vocab_size)
 
-        F_F = self.cxr_bert_feature_extractor(findings)     #（B, 768）
-        F_I = self.cxr_bert_feature_extractor(impression)   # (B, 768)
+        F_F, findings_text = self.cxr_bert_feature_extractor(findings)     #（B, 768）
+        F_I, impression_text = self.cxr_bert_feature_extractor(impression)   # (B, 768)
 
 
         return {
