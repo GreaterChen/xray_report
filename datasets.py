@@ -1,6 +1,7 @@
 # --- Base packages ---
 import os
 import json
+import pickle
 import numpy as np
 import pandas as pd
 
@@ -14,7 +15,7 @@ import sentencepiece as spm
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 from transformers import AutoTokenizer
-
+from tqdm import tqdm
 # --- Datasets ---
 class NIHCXR(data.Dataset): # Chest X-Ray 14 Dataset
     def __init__(self, directory, input_size=(512,512), random_transform=True):
@@ -148,40 +149,16 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
 
         # ------ Multiview Images ------
         if 'image' in self.sources:
-            imgs, vpos = [], []
-            
-            # Randomly select V images from each folder 
-            new_orders = np.random.permutation(len(self.img_files[idx]))    # TODO 处理视角问题
-            img_files = np.array(self.img_files[idx])[new_orders].tolist()
-            for i in range(min(self.max_views,len(img_files))):
-                # img_file = self.dir + 'images/' + idx[0] + '/' + idx[1] + '/' + img_files[i]
-                img_file = self.dir + 'images/' + idx[0][:3] + '/' + idx[0] + '/' + idx[1] + '/' + img_files[i]
 
-                pos = self.img_positions[img_files[i][:-4]]
-                img = Image.open(img_file).convert('RGB')
-                imgs.append(self.transform(img).unsqueeze(0)) # (1,C,W,H) 
-                vpos.append(self.dict_positions[pos])
-
-            # If the number of images is smaller than V, pad the tensor with dummy images
-            cur_len = len(vpos)
-            for i in range(cur_len, self.max_views):
-                imgs.append(torch.zeros_like(imgs[0]))
-                vpos.append(-1) # Empty mask
-            
-            imgs = torch.cat(imgs, dim=0) # (V,C,W,H)
-            vpos = np.array(vpos, dtype=np.int64) # (V)
+            img_file = os.path.join(self.dir, 'images', idx[0][:3] , idx[0], idx[1], idx[2] + '.jpg')
+            img = Image.open(img_file).convert('RGB')
+            pos = self.img_positions[idx[2]]
+            img = self.transform(img) # (1,C,W,H) 
+            vpos = self.dict_positions[pos]
 
         # ------ Additional Information ------
-        info = self.img_captions[idx]
-        
+        info = self.img_captions[idx[:2]]
         source_info = []
-
-        # 获取特殊字符的编码
-        cls_token_id = self.tokenizer.cls_token_id
-        sep_token_id = self.tokenizer.sep_token_id
-        pad_token_id = self.tokenizer.pad_token_id
-        bos_token_id = self.tokenizer.bos_token_id  # 如果有 BOS 特殊符号
-        eos_token_id = self.tokenizer.eos_token_id  # 如果有 EOS 特殊符号
 
         # 获取 FINDINGS 和 IMPRESSION
         findings = info.get('FINDINGS:', '')
@@ -202,7 +179,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
 
         for i in range(len(self.sources)):
             if self.sources[i] == 'image':
-                sources.append(imgs)
+                sources.append((img,vpos))
             elif self.sources[i] == 'findings':
                 sources.append(findings)
             elif self.sources[i] == 'impression':
@@ -220,7 +197,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         caption_file = json.load(open(self.dir + file_name, 'r'))
         img_captions = {}
         img_files = {}
-        for file_name, report in caption_file.items():
+        for file_name, report in tqdm(caption_file.items()):
             k = file_name[-23:-4]
             p = file_name[-23:-20]
             pid,sid = k.split('/')
@@ -230,11 +207,12 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                 file_list = os.listdir(self.dir + 'images/' + p + '/' + pid + '/' + sid)
 
                 # Select only images in self.view_pos
-                file_list = [f for f in file_list if self.img_positions[f[:-4]] in self.view_pos]
+                # file_list = [f for f in file_list if self.img_positions[f[:-4]] in self.view_pos]
                 # Make sure there is at least one image in each folder, and a non-empty findings section in each report
-                if len(file_list) and ('FINDINGS:' in report) and (report['FINDINGS:'] != ''): 
-                    img_files[(pid,sid)] = file_list
-                    img_captions[(pid,sid)] = report    # Include FINDINGS and IMPRESSION
+                if len(file_list) and ('FINDINGS:' in report) and (report['FINDINGS:'] != ''):
+                    for i, file in enumerate(file_list): 
+                        img_files[(pid,sid,file[:-4])] = file_list
+                        img_captions[(pid,sid)] = report    # Include FINDINGS and IMPRESSION
             except Exception as e:
                 pass
         return img_captions, img_files
@@ -275,12 +253,26 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
     def __input_data(self, binary_mode=True):
         self.img_positions, self.list_positions = self.__get_view_positions()
         self.dict_positions = dict(zip(self.list_positions, range(len(self.list_positions))))
-        self.img_captions, self.img_files = self.__get_reports_images()
-        self.img_labels, self.list_diseases = self.__get_labels(binary_mode)
-        self.dict_diseases = dict(zip(self.list_diseases, range(len(self.list_diseases))))
+
+        img_info_checkpoint_file = "/home/chenlb/xray_report_generation/checkpoints/img_info.pkl"
+        if os.path.exists(img_info_checkpoint_file):
+            with open(img_info_checkpoint_file, 'rb') as f:
+                checkpoint = pickle.load(f)
+                self.img_captions, self.img_files = checkpoint
+                print("Loaded checkpoint from file.")
+        else:
+            print("Checkpoint file not found. Generating new data.")
+            self.img_captions, self.img_files = self.__get_reports_images()
+            checkpoint = (self.img_captions, self.img_files)
+            with open(img_info_checkpoint_file, 'wb') as f:
+                pickle.dump(checkpoint, f)
+                print("Checkpoint saved to file.")
+
+        # self.img_labels, self.list_diseases = self.__get_labels(binary_mode)
+        # self.dict_diseases = dict(zip(self.list_diseases, range(len(self.list_diseases))))
         self.idx_pidsid = list(self.img_captions.keys())
         self.top_np = self.__get_nounphrase()
-        
+            
     def __generate_splits(self, test_size=0.2, seed=0, file_name='mimic-cxr-2.0.0-chexpert.csv'):
         train_val_file = open(os.path.join(self.dir, 'train_val_list.txt'), 'w')
         test_file = open(os.path.join(self.dir, 'test_list.txt'), 'w')
@@ -338,32 +330,33 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         train_dataset = MIMIC(self.dir, self.input_size, self.random_transform, 
                               self.view_pos, self.max_views, self.sources, self.targets, 
                               self.max_len)
-        train_dataset.idx_pidsid = [(pid,sid) for pid,sid in train_files[train_indices]] if not debug_mode else [(pid,sid) for pid,sid in train_files[train_indices]][:10000]
+        train_dataset.idx_pidsid = [(pid,sid,uuid) for pid,sid,uuid in train_files[train_indices]] if not debug_mode else [(pid,sid,uuid) for pid,sid,uuid in train_files[train_indices]][:10000]
         
-        val_dataset = MIMIC(self.dir, self.input_size, False, 
-                            self.view_pos, self.max_views, self.sources, self.targets, 
-                            self.max_len)
-        val_dataset.idx_pidsid = [(pid,sid) for pid,sid in train_files[val_indices]] if not debug_mode else [(pid,sid) for pid,sid in train_files[val_indices]][:1000]
+        # val_dataset = MIMIC(self.dir, self.input_size, False, 
+        #                     self.view_pos, self.max_views, self.sources, self.targets, 
+        #                     self.max_len)
+        # val_dataset.idx_pidsid = [(pid,sid,uuid) for pid,sid,uuid in train_files[val_indices]] if not debug_mode else [(pid,sid,uuid) for pid,sid,uuid in train_files[val_indices]][:1000]
 
-        test_dataset = MIMIC(self.dir, self.input_size, False, 
-                            self.view_pos, self.max_views, self.sources, self.targets, 
-                            self.max_len)
-        test_dataset.idx_pidsid = [(pid,sid) for pid,sid in test_files] if not debug_mode else [(pid,sid) for pid,sid in test_files][:1000]
+        # test_dataset = MIMIC(self.dir, self.input_size, False, 
+        #                     self.view_pos, self.max_views, self.sources, self.targets, 
+        #                     self.max_len)
+        # test_dataset.idx_pidsid = [(pid,sid,uuid) for pid,sid,uuid in test_files] if not debug_mode else [(pid,sid,uuid) for pid,sid,uuid in test_files][:1000]
 
-        # Use only a subset to make the model run quickly
-        if train_phase:
-            subset_size = 1000
-        else:
-            subset_size = 100#000
+        # # Use only a subset to make the model run quickly
+        # if train_phase:
+        #     subset_size = 1000
+        # else:
+        #     subset_size = 100#000
         
-        val_idx = np.random.choice(len(val_dataset.idx_pidsid), size=min(subset_size, len(val_dataset.idx_pidsid)), replace=False)
-        test_idx = np.random.choice(len(test_dataset.idx_pidsid), size=min(subset_size, len(test_dataset.idx_pidsid)), replace=False)
+        # val_idx = np.random.choice(len(val_dataset.idx_pidsid), size=min(subset_size, len(val_dataset.idx_pidsid)), replace=False)
+        # test_idx = np.random.choice(len(test_dataset.idx_pidsid), size=min(subset_size, len(test_dataset.idx_pidsid)), replace=False)
         
-        train_dataset.idx_pidsid = train_dataset.idx_pidsid[:]
-        val_dataset.idx_pidsid = [val_dataset.idx_pidsid[i] for i in val_idx]
-        test_dataset.idx_pidsid = [test_dataset.idx_pidsid[i] for i in test_idx]
+        # train_dataset.idx_pidsid = train_dataset.idx_pidsid[:]
+        # val_dataset.idx_pidsid = [val_dataset.idx_pidsid[i] for i in val_idx]
+        # test_dataset.idx_pidsid = [test_dataset.idx_pidsid[i] for i in test_idx]
         
-        return train_dataset, val_dataset, test_dataset
+        # return train_dataset, val_dataset, test_dataset
+        return train_dataset, None, None
 
 class NLMCXR(data.Dataset): # Open-I Dataset
     def __init__(self, directory, input_size=(256,256), random_transform=True,

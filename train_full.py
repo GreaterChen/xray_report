@@ -114,7 +114,7 @@ if __name__ == "__main__":
     elif MODEL_NAME == 'HiMrGn':
         SOURCES = ['image', 'findings', 'impression']
         TARGETS = ['findings','impression']
-        KW_SRC = ['image', 'findings', 'impression'] # kwargs of Classifier
+        KW_SRC = ['image', 'findings', 'impression'] 
         KW_TGT = ['findings', 'impression']
         KW_OUT = None
         
@@ -131,15 +131,6 @@ if __name__ == "__main__":
         
         dataset = MIMIC('/mnt/chenlb/mimic/', INPUT_SIZE, view_pos=VIEW_POS, max_views=MAX_VIEWS, sources=SOURCES, targets=TARGETS)
         train_data, val_data, test_data = dataset.get_subsets(seed=123)
-        
-        # if not os.path.exists('/home/chenlb/xray_report_generation/checkpoints/train_data.pt'):
-        #     torch.save(train_data, '/home/chenlb/xray_report_generation/checkpoints/train_data.pt')
-        #     torch.save(val_data, '/home/chenlb/xray_report_generation/checkpoints/val_data.pt')
-        #     torch.save(test_data, '/home/chenlb/xray_report_generation/checkpoints/test_data.pt')
-        # else:
-        #     train_data = torch.load('/home/chenlb/xray_report_generation/checkpoints/train_data.pt')
-        #     val_data = torch.load('/home/chenlb/xray_report_generation/checkpoints/val_data.pt')
-        #     test_data = torch.load('/home/chenlb/xray_report_generation/checkpoints/test_data.pt')
 
         VOCAB_SIZE = dataset.tokenizer.vocab_size
         POSIT_SIZE = dataset.max_len

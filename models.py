@@ -47,11 +47,13 @@ class SwinFeatureExtractor(nn.Module):
         self.image_encoder = create_model(image_encoder_name, pretrained=pretrained, features_only=True)
         
         # 映射到低维视觉特征 Fv
-        self.feature_proj = nn.Sequential(
-            nn.Conv2d(self.image_encoder.feature_info[-1]['num_chs'], 512, kernel_size=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((1, 1))  # 提取全局特征
-        )
+        # self.feature_proj = nn.Sequential(
+        #     nn.Conv2d(self.image_encoder.feature_info[-1]['num_chs'], 512, kernel_size=1),
+        #     nn.ReLU(),
+        #     nn.AdaptiveAvgPool2d((1, 1))  # 提取全局特征
+        # )
+
+        self.gap = nn.AdaptiveAvgPool2d((1, 1)) 
     
     def forward(self, image):
         """
@@ -59,23 +61,21 @@ class SwinFeatureExtractor(nn.Module):
         返回:
         Fv: 视觉特征，形状为 (B, 512)
         """
-        # TODO 处理多视角
-        image = image[:, 0, :, :, :]
-
         # 提取图像的多层特征
         features = self.image_encoder(image)
         
         # 获取最后一层特征并调整维度顺序 (B, C, H, W)
-        features_last = features[-1].permute(0, 3, 1, 2)
+        features_last = features[-1].permute(0, 3, 1, 2)    # (2,1536,7,7)
         
         # 仅使用最后一层特征进行降维和处理
-        fv = self.feature_proj(features_last)  # 输出形状 (B, 512, 1, 1)
-        fv = fv.squeeze(-1).squeeze(-1)      # 输出形状 (B, 512)
+        # fv = self.feature_proj(features_last)  
+        features_last = self.gap(features_last)
+        features_last = features_last.squeeze(-1).squeeze(-1)      # 输出形状 (B, 512)
         
-        return fv
+        return features_last
     
 class DiseaseFeatureProjector(nn.Module):
-    def __init__(self, input_dim=512, num_diseases=512, feature_dim=512):
+    def __init__(self, input_dim=1536, num_diseases=512, feature_dim=512):
         """
         Args:
             input_dim: 输入视觉特征 x 的维度（Swin Transformer 输出的维度 C）。
@@ -385,7 +385,7 @@ class HiMrGn(nn.Module):
         self.cxr_bert_feature_extractor = cxr_bert_feature_extractor
         
     def forward(self, image, vpos=None, findings=None, impression=None):
-        x = self.image_encoder(image)   # (B, C)
+        x = self.image_encoder(image[0])   # (B, C)
 
         F_v = self.features_projector(x)    # (B, Nv, Cv)
 
