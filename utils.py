@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
 
 from tqdm import tqdm
 
@@ -200,7 +201,6 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 def visual_parameters(modules, parameters):
-	import matplotlib.pyplot as plt
 	# 数据
 	total_parameters = sum(parameters)
 
@@ -212,3 +212,21 @@ def visual_parameters(modules, parameters):
 	plt.pie(percentages, labels=modules, autopct='%1.1f%%', startangle=140)
 	plt.title("Parameter Distribution Among Modules")
 	plt.savefig("/home/chenlb/xray_report_generation/results/parameter_distribution.png")
+
+
+
+# 绘制直方图
+def plot_length_distribution(distribution, title):
+	# 准备数据
+	lengths = list(distribution.keys())  # Token 长度
+	counts = list(distribution.values())  # 出现次数
+
+	# 绘制直方图
+	plt.figure(figsize=(10, 6))
+	plt.bar(lengths, counts)
+	plt.title(title)
+	plt.xlabel("Token Length")
+	plt.ylabel("Count")
+	plt.xticks(lengths)
+	plt.tight_layout()
+	plt.savefig(f"/home/chenlb/xray_report_generation/results/{title.replace(' ', '_')}.png")

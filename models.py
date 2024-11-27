@@ -73,9 +73,9 @@ class SwinFeatureExtractor(nn.Module):
         
         # 仅使用最后一层特征进行降维和处理
         fv = self.feature_proj(features_last)  
-        features_last = features_last.squeeze(-1).squeeze(-1)      # 输出形状 (B, 512)
+        fv = fv.squeeze(-1).squeeze(-1)      # 输出形状 (B, 512)
         
-        return features_last
+        return fv
     
 class DiseaseFeatureProjector(nn.Module):
     def __init__(self, input_dim=512, num_diseases=512, feature_dim=512):

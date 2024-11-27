@@ -16,6 +16,8 @@ from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 from transformers import AutoTokenizer
 from tqdm import tqdm
+from collections import defaultdict
+from utils import *
 # --- Datasets ---
 class NIHCXR(data.Dataset): # Chest X-Ray 14 Dataset
     def __init__(self, directory, input_size=(512,512), random_transform=True):
@@ -137,7 +139,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             ])
         else:
             self.transform = transforms.Compose([transforms.Resize(input_size), transforms.ToTensor()])
-            
+
     def __len__(self):
         return len(self.idx_pidsid)
 #rewrite
@@ -197,6 +199,8 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         caption_file = json.load(open(self.dir + file_name, 'r'))
         img_captions = {}
         img_files = {}
+        self.findings_token_distribution = defaultdict(int)
+        self.impression_token_distribution = defaultdict(int)
         for file_name, report in tqdm(caption_file.items()):
             k = file_name[-23:-4]
             p = file_name[-23:-20]
@@ -213,8 +217,25 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                     for i, file in enumerate(file_list): 
                         img_files[(pid,sid,file[:-4])] = file_list
                         img_captions[(pid,sid)] = report    # Include FINDINGS and IMPRESSION
+
+            
+                        findings = report.get('FINDINGS:', '')
+                        impression = report.get('IMPRESSION:', '')
+
+                        # 对 FINDINGS 和 IMPRESSION 进行编码
+                        origin_encoded_findings = self.tokenizer.encode(findings, add_special_tokens=True)
+                        origin_encoded_impression = self.tokenizer.encode(impression, add_special_tokens=True)
+
+                        # 更新分布字典
+                        self.findings_token_distribution[len(origin_encoded_findings)] += 1
+                        self.impression_token_distribution[len(origin_encoded_impression)] += 1
+
             except Exception as e:
                 pass
+
+        plot_length_distribution(self.findings_token_distribution, "Findings Token Length Distribution")
+        plot_length_distribution(self.impression_token_distribution, "Impression Token Length Distribution")
+
         return img_captions, img_files
 
     def __get_view_positions(self, file_name='mimic-cxr-2.0.0-metadata.csv'):
