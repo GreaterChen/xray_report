@@ -387,26 +387,41 @@ class HiMrGn(nn.Module):
         self.impression_decoder = impression_decoder
         self.cxr_bert_feature_extractor = cxr_bert_feature_extractor
         
-    def forward(self, image, vpos=None, findings=None, impression=None):
-        x = self.image_encoder(image[0])   # (B, C)
+    def forward(self, image, findings=None, impression=None, train_stage=2):
+        if train_stage == 1:
+            x = self.image_encoder(image[0])   # (B, C)
 
-        F_v = self.features_projector(x)    # (B, Nv, Cv)
+            F_v = self.features_projector(x)    # (B, Nv, Cv)
 
-        findings, F_t = self.findings_decoder(F_v, findings)    # (B, max_len, vocab_size), (B, max_len, hidden_dim)         
+            findings, _ = self.findings_decoder(F_v, findings)    # (B, max_len, vocab_size), (B, max_len, hidden_dim)         
 
-        F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)   # (B, max_len, hidden_dim), (B, Nv, Cv)      
+            return {
+                "findings": findings, 
+                "impression": None, 
+                "F_F": None, 
+                "F_I": None
+            }
+        
+        elif train_stage == 2:
+            x = self.image_encoder(image[0])   # (B, C)
 
-        impression = self.impression_decoder(F_v_prime, F_t_prime, F_t, target_sequence=impression) # (B, max_len, vocab_size)
+            F_v = self.features_projector(x)    # (B, Nv, Cv)
 
-        F_F, findings_text = self.cxr_bert_feature_extractor(findings)     #（B, 768）
-        F_I, impression_text = self.cxr_bert_feature_extractor(impression)   # (B, 768)
+            findings, F_t = self.findings_decoder(F_v, findings)    # (B, max_len, vocab_size), (B, max_len, hidden_dim)         
+
+            F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)   # (B, max_len, hidden_dim), (B, Nv, Cv)      
+
+            impression = self.impression_decoder(F_v_prime, F_t_prime, F_t, target_sequence=impression) # (B, max_len, vocab_size)
+
+            F_F, findings_text = self.cxr_bert_feature_extractor(findings)     #（B, 768）
+            F_I, impression_text = self.cxr_bert_feature_extractor(impression)   # (B, 768)
 
 
-        return {
-            "findings": findings, 
-            "impression": impression, 
-            "F_F": F_F, 
-            "F_I": F_I
-        }
+            return {
+                "findings": findings, 
+                "impression": impression, 
+                "F_F": F_F, 
+                "F_I": F_I
+            }
 
 

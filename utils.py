@@ -80,7 +80,7 @@ def args_to_kwargs(args, kwargs_list=None): # This function helps distribute inp
 		return args
 
 # ------ Core Functions ------
-def train(data_loader, model, optimizer, criterion, scheduler=None, device='cpu', kw_src=None, kw_tgt=None, kw_out=None, scaler=None):
+def train(data_loader, model, optimizer, criterion, train_stage=2, scheduler=None, device='cpu', kw_src=None, kw_tgt=None, kw_out=None, scaler=None):
 	model.train()
 	running_loss = 0
  
@@ -91,6 +91,8 @@ def train(data_loader, model, optimizer, criterion, scheduler=None, device='cpu'
 
 		source = args_to_kwargs(source, kw_src)
 		target = args_to_kwargs(target, kw_tgt)
+
+		source['train_stage'] = train_stage
 
 		if scaler != None:
 			with torch.cuda.amp.autocast():

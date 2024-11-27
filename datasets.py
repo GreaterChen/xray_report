@@ -159,7 +159,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             vpos = self.dict_positions[pos]
 
         # ------ Additional Information ------
-        info = self.img_captions[idx[:2]]
+        info = self.img_captions[idx]
         source_info = []
 
         # 获取 FINDINGS 和 IMPRESSION
@@ -201,6 +201,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         img_files = {}
         self.findings_token_distribution = defaultdict(int)
         self.impression_token_distribution = defaultdict(int)
+        miss_cnt = 0
         for file_name, report in tqdm(caption_file.items()):
             k = file_name[-23:-4]
             p = file_name[-23:-20]
@@ -213,29 +214,29 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                 # Select only images in self.view_pos
                 # file_list = [f for f in file_list if self.img_positions[f[:-4]] in self.view_pos]
                 # Make sure there is at least one image in each folder, and a non-empty findings section in each report
-                if len(file_list) and ('FINDINGS:' in report) and (report['FINDINGS:'] != ''):
+                if len(file_list):
                     for i, file in enumerate(file_list): 
-                        img_files[(pid,sid,file[:-4])] = file_list
-                        img_captions[(pid,sid)] = report    # Include FINDINGS and IMPRESSION
-
+                        img_files[(pid,sid,file[:-4])] = file
+                        img_captions[(pid,sid,file[:-4])] = report    # Include FINDINGS and IMPRESSION
             
-                        findings = report.get('FINDINGS:', '')
-                        impression = report.get('IMPRESSION:', '')
+                        # findings = report.get('FINDINGS:', '')
+                        # impression = report.get('IMPRESSION:', '')
 
-                        # 对 FINDINGS 和 IMPRESSION 进行编码
-                        origin_encoded_findings = self.tokenizer.encode(findings, add_special_tokens=True)
-                        origin_encoded_impression = self.tokenizer.encode(impression, add_special_tokens=True)
+                        # # 对 FINDINGS 和 IMPRESSION 进行编码
+                        # origin_encoded_findings = self.tokenizer.encode(findings, add_special_tokens=True)
+                        # origin_encoded_impression = self.tokenizer.encode(impression, add_special_tokens=True)
 
-                        # 更新分布字典
-                        self.findings_token_distribution[len(origin_encoded_findings)] += 1
-                        self.impression_token_distribution[len(origin_encoded_impression)] += 1
+                        # # 更新分布字典
+                        # self.findings_token_distribution[len(origin_encoded_findings)] += 1
+                        # self.impression_token_distribution[len(origin_encoded_impression)] += 1
 
             except Exception as e:
+                miss_cnt += 1
                 pass
 
-        plot_length_distribution(self.findings_token_distribution, "Findings Token Length Distribution")
-        plot_length_distribution(self.impression_token_distribution, "Impression Token Length Distribution")
-
+        # plot_length_distribution(self.findings_token_distribution, "Findings Token Length Distribution")
+        # plot_length_distribution(self.impression_token_distribution, "Impression Token Length Distribution")
+        print("无对应文件夹数量：", miss_cnt)
         return img_captions, img_files
 
     def __get_view_positions(self, file_name='mimic-cxr-2.0.0-metadata.csv'):

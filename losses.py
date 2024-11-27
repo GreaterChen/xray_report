@@ -55,7 +55,7 @@ class ContrastiveLearningLoss(nn.Module):
 	
 
 class SequenceCrossEntropyLoss(nn.Module):
-    def __init__(self, pad_id=3):
+    def __init__(self, pad_id=0):
         """
         计算生成序列的交叉熵损失。
         Args:
@@ -80,9 +80,27 @@ class SequenceCrossEntropyLoss(nn.Module):
         # 忽略填充标记的损失
         loss = F.cross_entropy(predictions, targets, ignore_index=self.pad_id, reduction="mean")
         return loss
-	
+    
+class StageOneLoss(nn.Module):
+    def __init__(self, pad_id=0):
+        super(StageOneLoss, self).__init__()
+        self.cross_entropy_loss = SequenceCrossEntropyLoss(pad_id=pad_id)
+
+    def forward(self, output, targets):
+        findings = output['findings']
+        findings_gt = targets['findings']
+
+        findings_loss = self.cross_entropy_loss(findings, findings_gt)
+
+        losses = {
+            "findings_loss": findings_loss,
+        }
+
+        return findings_loss, losses
+
+
 class CombinedLoss(nn.Module):
-    def __init__(self, pad_id=3, feature_dim=768, projection_dim=128, hidden_dim=256, lambda_contrastive=1.0):
+    def __init__(self, pad_id=0, feature_dim=768, projection_dim=128, hidden_dim=256, lambda_contrastive=1.0):
         """
         综合损失函数，包括：
         1. Findings 和 Impression 的交叉熵损失。

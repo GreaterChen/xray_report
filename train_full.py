@@ -22,7 +22,7 @@ from tqdm import tqdm
 # --- Project Packages ---
 from utils import *
 from datasets import NIHCXR, MIMIC, NLMCXR
-from losses import CombinedLoss
+from losses import *
 from models import *
 from baselines.transformer.models import LSTM_Attn, Transformer, GumbelTransformer
 from baselines.rnn.models import ST
@@ -70,7 +70,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 torch.manual_seed(seed=123)
 
 RELOAD = False # True / False
-PHASE = 'TRAIN' # TRAIN / TEST / INFER
+PHASE = 'TRAIN_STAGE_2' # TRAIN / TEST / INFER
 DATASET_NAME = 'MIMIC' # NIHCXR / NLMCXR / MIMIC
 BACKBONE_NAME = 'SwinT'
 MODEL_NAME = 'HiMrGn' # HiMrGn
@@ -134,6 +134,7 @@ if __name__ == "__main__":
 
         VOCAB_SIZE = dataset.tokenizer.vocab_size
         POSIT_SIZE = dataset.max_len
+        PAD_ID = dataset.tokenizer.pad_token_id
         COMMENT = 'MaxView{}_NumLabel{}_{}History'.format(MAX_VIEWS, NUM_LABELS, 'No' if 'history' not in SOURCES else '')
             
     elif DATASET_NAME == 'NLMCXR':
@@ -185,8 +186,6 @@ if __name__ == "__main__":
                        impression_decoder=impression_generator,
                        cxr_bert_feature_extractor=cxr_bert_feature_extractor)
         
-        criterion = CombinedLoss().cuda()
-
 
         # Compute parameters for each module
         module_parameters = {
@@ -232,14 +231,35 @@ if __name__ == "__main__":
         # last_epoch, (best_metric, test_metric) = load(checkpoint_path_from, model) # Fine-tune
         print('Reload From: {} | Last Epoch: {} | Validation Metric: {} | Test Metric: {}'.format(checkpoint_path_from, last_epoch, best_metric, test_metric))
 
-    if PHASE == 'TRAIN':
+    if PHASE == 'TRAIN_STAGE_1':
+        criterion = StageOneLoss(pad_id=PAD_ID).cuda()
+
         scaler = torch.cuda.amp.GradScaler()
         
         for epoch in range(last_epoch+1, EPOCHS):
             print('Epoch:', epoch)
-            train_loss = train(train_loader, model, optimizer, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, scaler=scaler)
-            val_loss = test(val_loader, model, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, return_results=False)
-            test_loss = test(test_loader, model, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, return_results=False)
+            train_loss = train(train_loader, model, optimizer, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, scaler=scaler, train_stage=1)
+            val_loss = test(val_loader, model, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, return_results=False, train_stage=1)
+            test_loss = test(test_loader, model, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, return_results=False, train_stage=1)
+            
+            scheduler.step()
+            
+            if best_metric > val_loss:
+                best_metric = val_loss
+                save(checkpoint_path_to, model, optimizer, scheduler, epoch, (val_loss, test_loss))
+                print('New Best Metric: {}'.format(best_metric)) 
+                print('Saved To:', checkpoint_path_to)
+
+    elif PHASE == 'TRAIN_STAGE_2':
+        criterion = CombinedLoss(pad_id=PAD_ID).cuda()
+
+        scaler = torch.cuda.amp.GradScaler()
+        
+        for epoch in range(last_epoch+1, EPOCHS):
+            print('Epoch:', epoch)
+            train_loss = train(train_loader, model, optimizer, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, scaler=scaler, train_stage=2)
+            val_loss = test(val_loader, model, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, return_results=False, train_stage=2)
+            test_loss = test(test_loader, model, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, return_results=False, train_stage=2)
             
             scheduler.step()
             
