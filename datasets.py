@@ -108,7 +108,7 @@ class NIHCXR(data.Dataset): # Chest X-Ray 14 Dataset
 class MIMIC(data.Dataset): # MIMIC-CXR Dataset
     def __init__(self, directory, input_size=(224,224), random_transform=True,
                 view_pos=['AP'], max_views=2, sources=['image','history'], targets=['label'], 
-                max_len=512, model_name='microsoft/BiomedVLP-CXR-BERT-specialized'):
+                max_len=512, model_name='microsoft/BiomedVLP-CXR-BERT-specialized', train_stage=2):
 
         # self.source_sections = ['INDICATION:', 'HISTORY:', 'CLINICAL HISTORY:', 'REASON FOR EXAM:', 'REASON FOR EXAMINATION:', 'CLINICAL INFORMATION:', 'CLINICAL INDICATION:', 'PATIENT HISTORY:']
         self.source_sections = []
@@ -126,6 +126,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         self.dir = directory
         self.input_size = input_size
         self.random_transform = random_transform
+        self.train_stage = train_stage
         self.__input_data(binary_mode=True)
         
         if random_transform:
@@ -336,10 +337,15 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         if generate_splits:
             self.__generate_splits(seed=0)
             print('New splits generated')
-            
-        train_files = np.loadtxt(os.path.join(self.dir, 'train_val_list.txt'), dtype=str)
-        test_files = np.loadtxt(os.path.join(self.dir, 'test_list.txt'), dtype=str)
+        
 
+        if self.train_stage == 1:
+            train_files = np.loadtxt(self.dir + 'train_val_list_findings.txt', dtype=str)
+            test_files = np.loadtxt(self.dir + 'test_list_findings.txt', dtype=str)
+        else:
+            train_files = np.loadtxt(self.dir + 'train_val_list_findings_impression.txt', dtype=str)
+            test_files = np.loadtxt(self.dir + 'test_list_findings_impression.txt', dtype=str)
+            
         train_files = np.array([f.split('/') for f in train_files])
         test_files = np.array([f.split('/') for f in test_files])
         
