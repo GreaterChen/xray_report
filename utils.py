@@ -194,3 +194,7 @@ def load(path, model, optimizer=None, scheduler=None):
 		except: # Input scheduler doesn't fit the checkpoint one --> should be ignored
 			print('Cannot load the scheduler')
 	return epoch, stats
+
+def count_parameters(model):
+    """Count the number of parameters in a model."""
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)

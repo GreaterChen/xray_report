@@ -20,7 +20,7 @@ from torchvision.models import resnet50, ResNet50_Weights
 from tqdm import tqdm
 
 # --- Project Packages ---
-from utils import save, load, train, test, data_to_device, data_concatenate
+from utils import *
 from datasets import NIHCXR, MIMIC, NLMCXR
 from losses import CombinedLoss
 from models import *
@@ -176,9 +176,7 @@ if __name__ == "__main__":
         impression_decoder = TextDecoder()
         impression_generator = ImpressionGenerator(impression_decoder)
 
-        # word_translator = WordTranslator(model_file_path="/mnt/chenlb/mimic/mimic_unigram_1000.model")
         cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor()
-
 
         model = HiMrGn(image_encoder=swin_transformer, 
                        features_projector=features_projector, 
@@ -188,6 +186,21 @@ if __name__ == "__main__":
                        cxr_bert_feature_extractor=cxr_bert_feature_extractor)
         
         criterion = CombinedLoss().cuda()
+
+
+        # Compute parameters for each module
+        module_parameters = {
+            "Swin Transformer": count_parameters(swin_transformer),
+            "Features Projector": count_parameters(features_projector),
+            "Findings Generator": count_parameters(findings_generator),
+            "Co-Attention Module": count_parameters(co_attention_module),
+            "Impression Generator": count_parameters(impression_generator),
+            "CXR BERT Feature Extractor": count_parameters(cxr_bert_feature_extractor),
+        }
+
+        # Print results
+        for module_name, param_count in module_parameters.items():
+            print(f"{module_name}: {param_count} parameters")
         
     else:
         raise ValueError('Invalid MODEL_NAME')

@@ -14,6 +14,12 @@ class CXR_BERT_FeatureExtractor(nn.Module):
         # 加载预训练的 CXR-BERT 模型和对应的分词器
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(self.device)
+
+        # Freeze all parameters in the BERT model (no training of these parameters)
+        for param in self.model.parameters():
+            param.requires_grad = False
+
+
         self.model.eval()  # 设置模型为评估模式
 
     def forward(self, inputs):
@@ -47,13 +53,12 @@ class SwinFeatureExtractor(nn.Module):
         self.image_encoder = create_model(image_encoder_name, pretrained=pretrained, features_only=True)
         
         # 映射到低维视觉特征 Fv
-        # self.feature_proj = nn.Sequential(
-        #     nn.Conv2d(self.image_encoder.feature_info[-1]['num_chs'], 512, kernel_size=1),
-        #     nn.ReLU(),
-        #     nn.AdaptiveAvgPool2d((1, 1))  # 提取全局特征
-        # )
+        self.feature_proj = nn.Sequential(
+            nn.Conv2d(self.image_encoder.feature_info[-1]['num_chs'], 512, kernel_size=1),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((1, 1))  # 提取全局特征
+        )
 
-        self.gap = nn.AdaptiveAvgPool2d((1, 1)) 
     
     def forward(self, image):
         """
@@ -68,14 +73,13 @@ class SwinFeatureExtractor(nn.Module):
         features_last = features[-1].permute(0, 3, 1, 2)    # (2,1536,7,7)
         
         # 仅使用最后一层特征进行降维和处理
-        # fv = self.feature_proj(features_last)  
-        features_last = self.gap(features_last)
+        fv = self.feature_proj(features_last)  
         features_last = features_last.squeeze(-1).squeeze(-1)      # 输出形状 (B, 512)
         
         return features_last
     
 class DiseaseFeatureProjector(nn.Module):
-    def __init__(self, input_dim=1536, num_diseases=512, feature_dim=512):
+    def __init__(self, input_dim=512, num_diseases=512, feature_dim=512):
         """
         Args:
             input_dim: 输入视觉特征 x 的维度（Swin Transformer 输出的维度 C）。
@@ -107,7 +111,7 @@ class DiseaseFeatureProjector(nn.Module):
         return F_v
     
 class TextDecoder(nn.Module):
-    def __init__(self, tokenizer_model_name='microsoft/BiomedVLP-CXR-BERT-specialized', input_dim=512, hidden_dim=512, num_head=8, num_layers=1, max_len=512):
+    def __init__(self, tokenizer_model_name='microsoft/BiomedVLP-CXR-BERT-specialized', input_dim=512, hidden_dim=512, num_head=8, num_layers=6, max_len=512):
         super(TextDecoder, self).__init__()
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name, trust_remote_code=True)  # 使用 CXR-BERT 的 tokenizer
         self.vocab_size = self.tokenizer.vocab_size
