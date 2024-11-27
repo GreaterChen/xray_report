@@ -19,7 +19,6 @@ class CXR_BERT_FeatureExtractor(nn.Module):
         for param in self.model.parameters():
             param.requires_grad = False
 
-
         self.model.eval()  # 设置模型为评估模式
 
     def forward(self, inputs):

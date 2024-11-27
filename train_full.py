@@ -201,6 +201,8 @@ if __name__ == "__main__":
         # Print results
         for module_name, param_count in module_parameters.items():
             print(f"{module_name}: {param_count} parameters")
+
+        visual_parameters(modules=module_parameters.keys(), parameters=module_parameters.values())
         
     else:
         raise ValueError('Invalid MODEL_NAME')

@@ -198,3 +198,17 @@ def load(path, model, optimizer=None, scheduler=None):
 def count_parameters(model):
     """Count the number of parameters in a model."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+def visual_parameters(modules, parameters):
+	import matplotlib.pyplot as plt
+	# 数据
+	total_parameters = sum(parameters)
+
+	# 计算占比
+	percentages = [param / total_parameters * 100 for param in parameters]
+
+	# 绘制饼状图
+	plt.figure(figsize=(8, 8))
+	plt.pie(percentages, labels=modules, autopct='%1.1f%%', startangle=140)
+	plt.title("Parameter Distribution Among Modules")
+	plt.savefig("/home/chenlb/xray_report_generation/results/parameter_distribution.png")
