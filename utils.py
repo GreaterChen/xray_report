@@ -85,7 +85,7 @@ def train(data_loader, model, optimizer, criterion, train_stage=2, scheduler=Non
 	running_loss = 0
  
 	prog_bar = tqdm(data_loader)
-	for i, (source, target) in enumerate(prog_bar):
+	for i, (source, target, idx) in enumerate(prog_bar):
 		source = data_to_device(source, device)
 		target = data_to_device(target, device)
 
@@ -93,6 +93,7 @@ def train(data_loader, model, optimizer, criterion, train_stage=2, scheduler=Non
 		target = args_to_kwargs(target, kw_tgt)
 
 		source['train_stage'] = train_stage
+		source['idx'] = idx
 
 		if scaler != None:
 			with torch.cuda.amp.autocast():
@@ -102,6 +103,10 @@ def train(data_loader, model, optimizer, criterion, train_stage=2, scheduler=Non
 				
 			running_loss += loss.item()
 			prog_bar.set_description('Loss: {}'.format(running_loss/(i+1)))
+
+			if torch.isnan(loss) or loss.item() > 1000:
+				print("error!")
+				loss = criterion(output, target)
 
 			# Back-propagate and update weights
 			optimizer.zero_grad()
@@ -114,6 +119,10 @@ def train(data_loader, model, optimizer, criterion, train_stage=2, scheduler=Non
 			output = data_distributor(model, source)
 			output = args_to_kwargs(output, kw_out)
 			loss = criterion(output, target)
+
+			if torch.isnan(loss) or loss.item() > 1000:
+				print("error!")
+				loss = criterion(output, target)
 
 			running_loss += loss.item()
 			prog_bar.set_description('Loss: {}'.format(running_loss/(i+1)))

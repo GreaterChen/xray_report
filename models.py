@@ -156,7 +156,11 @@ class TextDecoder(nn.Module):
         batch_size = fv.size(0)
         memory = fv.permute(1, 0, 2)  # 转换为 (N_v, B, C_v)
 
+        assert not torch.isnan(fv).any(), "fv contains NaN values!"
+        assert not torch.isinf(fv).any(), "fv contains Inf values!"
         if target_sequence is not None:  # 训练阶段
+            assert not torch.isnan(target_sequence).any(), "target_sequence contains NaN values!"
+            assert not torch.isinf(target_sequence).any(), "target_sequence contains Inf values!"
             seq_len = target_sequence.size(1)
 
             # 嵌入目标序列并加上 Sinusoidal 位置编码
@@ -181,6 +185,7 @@ class TextDecoder(nn.Module):
 
             # 生成 F_t：对每个隐藏状态应用 softmax
             F_t = F.softmax(decoder_output, dim=-1)  # (B, seq_len, hidden_dim)
+            # F_t = F.softmax(decoder_output / torch.sqrt(torch.tensor(self.hidden_dim, dtype=torch.float32)), dim=-1)
 
         else:  # 测试阶段
             outputs = torch.zeros(batch_size, self.max_len, dtype=torch.long).fill_(self.pad_id).to(fv.device)
@@ -222,6 +227,11 @@ class TextDecoder(nn.Module):
 
             output = outputs  # 返回生成的序列 (B, max_len)
             F_t = torch.stack(F_t_list, dim=1)  # 拼接 F_t，形状 (B, max_len, hidden_dim)
+
+        # 添加检查
+        if torch.isnan(decoder_output).any():
+            print("NaN detected in decoder_output")
+            self.forward(fv, target_sequence)
 
         return output, F_t
     
@@ -387,7 +397,7 @@ class HiMrGn(nn.Module):
         self.impression_decoder = impression_decoder
         self.cxr_bert_feature_extractor = cxr_bert_feature_extractor
         
-    def forward(self, image, findings=None, impression=None, train_stage=2):
+    def forward(self, image, findings=None, impression=None, train_stage=2, idx=None):
         if train_stage == 1:
             x = self.image_encoder(image[0])   # (B, C)
 
@@ -415,7 +425,6 @@ class HiMrGn(nn.Module):
 
             F_F, findings_text = self.cxr_bert_feature_extractor(findings)     #（B, 768）
             F_I, impression_text = self.cxr_bert_feature_extractor(impression)   # (B, 768)
-
 
             return {
                 "findings": findings, 

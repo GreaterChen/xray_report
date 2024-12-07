@@ -59,7 +59,7 @@ def extract_metadata(file_name):
     return report_dict
 
 if __name__ == "__main__":
-    dataset_dir = '/home/LAB/liudy/Datasets/MIMIC/'
+    dataset_dir = '/mnt/chenlb/mimic_cxr'
     file_list = glob.glob(dataset_dir + 'files/**/*.txt', recursive=True)
     report_json = {}
     for file_name in file_list:

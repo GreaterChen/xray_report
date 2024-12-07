@@ -77,7 +77,7 @@ MODEL_NAME = 'HiMrGn' # HiMrGn
 
 if DATASET_NAME == 'MIMIC':
     EPOCHS = 100 # Start overfitting after 20 epochs
-    BATCH_SIZE = 8 if 'TRAIN' in PHASE else 32 # 192 # Fit 4 GPUs
+    BATCH_SIZE = 2 if 'TRAIN' in PHASE else 32 # 192 # Fit 4 GPUs
     MILESTONES = [25, 40, 55, 70, 85] # Reduce LR by 10 after reaching milestone epochs
     
 elif DATASET_NAME == 'NLMCXR':
@@ -130,9 +130,9 @@ if __name__ == "__main__":
         VIEW_POS = ['AP']
 
         if PHASE == "TRAIN_STAGE_1":
-            dataset = MIMIC('/mnt/chenlb/mimic/', INPUT_SIZE, view_pos=VIEW_POS, max_views=MAX_VIEWS, sources=SOURCES, targets=TARGETS, train_stage=1)
+            dataset = MIMIC('/mnt/chenlb/mimic_cxr/', INPUT_SIZE, view_pos=VIEW_POS, max_views=MAX_VIEWS, sources=SOURCES, targets=TARGETS, train_stage=1)
         else:
-            dataset = MIMIC('/mnt/chenlb/mimic/', INPUT_SIZE, view_pos=VIEW_POS, max_views=MAX_VIEWS, sources=SOURCES, targets=TARGETS, train_stage=2)
+            dataset = MIMIC('/mnt/chenlb/mimic_cxr/', INPUT_SIZE, view_pos=VIEW_POS, max_views=MAX_VIEWS, sources=SOURCES, targets=TARGETS, train_stage=2)
         train_data, val_data, test_data = dataset.get_subsets(seed=123)
 
         VOCAB_SIZE = dataset.tokenizer.vocab_size
@@ -158,7 +158,7 @@ if __name__ == "__main__":
 
     # --- Choose a Model ---
     if MODEL_NAME == 'HiMrGn':
-        LR = 5e-4 # Fastest LR
+        LR = 5e-5 # Fastest LR
         # LR = 3e-4 # Fastest LR
         WD = 1e-2 # Avoid overfitting with L2 regularization
         DROPOUT = 0.1 # Avoid overfitting
@@ -261,16 +261,16 @@ if __name__ == "__main__":
         for epoch in range(last_epoch+1, EPOCHS):
             print('Epoch:', epoch)
             train_loss = train(train_loader, model, optimizer, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, scaler=scaler, train_stage=2)
-            # val_loss = test(val_loader, model, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, return_results=False, train_stage=2)
-            # test_loss = test(test_loader, model, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, return_results=False, train_stage=2)
+            val_loss = test(val_loader, model, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, return_results=False, train_stage=2)
+            test_loss = test(test_loader, model, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, return_results=False, train_stage=2)
             
             scheduler.step()
             
-            # if best_metric > val_loss:
-            #     best_metric = val_loss
-            #     save(checkpoint_path_to, model, optimizer, scheduler, epoch, (val_loss, test_loss))
-            #     print('New Best Metric: {}'.format(best_metric)) 
-            #     print('Saved To:', checkpoint_path_to)
+            if best_metric > val_loss:
+                best_metric = val_loss
+                save(checkpoint_path_to, model, optimizer, scheduler, epoch, (val_loss, test_loss))
+                print('New Best Metric: {}'.format(best_metric)) 
+                print('Saved To:', checkpoint_path_to)
     
     elif PHASE == 'TEST':
         # Output the file list for inspection

@@ -145,7 +145,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         return len(self.idx_pidsid)
 #rewrite
     def __getitem__(self, idx):
-        idx = self.idx_pidsid[idx]  # TODO 应当删掉不存在 findings 或者 impression 的样本
+        idx = self.idx_pidsid[idx] 
 
         sources = []
         targets = []
@@ -194,7 +194,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             elif self.targets[i] == 'impression':
                 targets.append(impression)
                 
-        return sources if len(sources) > 1 else sources[0], targets if len(targets) > 1 else targets[0]
+        return sources if len(sources) > 1 else sources[0], targets if len(targets) > 1 else targets[0], idx
 
     def __get_reports_images(self, file_name='reports.json'):
         caption_file = json.load(open(self.dir + file_name, 'r'))
