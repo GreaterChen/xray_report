@@ -340,11 +340,11 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         
 
         if self.train_stage == 1:
-            train_files = np.loadtxt(self.dir + 'train_val_list_findings.txt', dtype=str)
-            test_files = np.loadtxt(self.dir + 'test_list_findings.txt', dtype=str)
+            train_files = np.loadtxt(os.path.join(self.dir, 'train_val_list_findings.txt'), dtype=str)
+            test_files = np.loadtxt(os.path.join(self.dir, 'test_list_findings.txt'), dtype=str)
         else:
-            train_files = np.loadtxt(self.dir + 'train_val_list_findings_impression.txt', dtype=str)
-            test_files = np.loadtxt(self.dir + 'test_list_findings_impression.txt', dtype=str)
+            train_files = np.loadtxt(os.path.join(self.dir, 'train_val_list_findings_impression.txt'), dtype=str)
+            test_files = np.loadtxt(os.path.join(self.dir, 'test_list_findings_impression.txt'), dtype=str)
             
         train_files = np.array([f.split('/') for f in train_files])
         test_files = np.array([f.split('/') for f in test_files])

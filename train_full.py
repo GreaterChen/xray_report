@@ -1,9 +1,9 @@
-   # --- Base packages ---
 import os
 import numpy as np
 import matplotlib.pyplot as plt
 import sklearn.metrics as metrics
 from datetime import datetime
+
 # --- PyTorch packages ---
 import torch
 import torch.nn as nn
@@ -18,6 +18,7 @@ from torchvision.models import resnet50, ResNet50_Weights
 
 # --- Helper Packages ---
 from tqdm import tqdm
+import argparse
 
 # --- Project Packages ---
 from utils import *
@@ -48,11 +49,7 @@ def infer(data_loader, model, device='cpu', threshold=None):
             # Use single input if there is no clinical history
             if threshold != None:
                 output = model(image=source[0], history=source[3], threshold=threshold)
-                # output = model(image=source[0], threshold=threshold)
-                # output = model(image=source[0], history=source[3], label=source[2])
-                # output = model(image=source[0], label=source[2])
             else:
-                # output = model(source[0], source[1])
                 output = model(source[0])
                 
             outputs.append(data_to_device(output))
@@ -62,133 +59,121 @@ def infer(data_loader, model, device='cpu', threshold=None):
         targets = data_concatenate(targets)
     
     return outputs, targets
-#
-# --- Hyperparameters ---
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-# os.environ["OMP_NUM_THREADS"] = "4"
-# torch.set_num_threads(4)
-torch.manual_seed(seed=123)
 
-RELOAD = False # True / False
-PHASE = 'TRAIN_STAGE_1' # TRAIN / TEST / INFER
-DATASET_NAME = 'MIMIC' # NIHCXR / NLMCXR / MIMIC
-BACKBONE_NAME = 'SwinT'
-MODEL_NAME = 'HiMrGn' # HiMrGn
+# --- Argument Parser ---
+def parse_args():
+    parser = argparse.ArgumentParser()
 
-if DATASET_NAME == 'MIMIC':
-    EPOCHS = 100 # Start overfitting after 20 epochs
-    BATCH_SIZE = 2 if 'TRAIN' in PHASE else 32 # 192 # Fit 4 GPUs
-    MILESTONES = [25, 40, 55, 70, 85] # Reduce LR by 10 after reaching milestone epochs
+    # Data input settings
+    parser.add_argument('--dir', type=str, default='/mnt/chenlb/mimic_cxr',
+                        help='Path to the directory.')
+    parser.add_argument('--image_dir', type=str, default='/mnt/chenlb/mimic_cxr/images',
+                        help='Path to the directory containing the image data.')
+    parser.add_argument('--ann_path', type=str, default='/mnt/chenlb/mimic_cxr/mimic_annotation_promptmrg_new.json',
+                        help='Path to the annotation file.')
+    parser.add_argument('--image_size', type=int, default=224, help='Input image size.')
+    parser.add_argument('--dataset_name', type=str, default='MIMIC', choices=['MIMIC', 'NIHCXR', 'NLMCXR'],
+                        help='Dataset name to use.')
     
-elif DATASET_NAME == 'NLMCXR':
-    EPOCHS = 50 # Start overfitting after 20 epochs
-    BATCH_SIZE = 64 if PHASE == 'TRAIN' else 64 # Fit 4 GPUs
-    MILESTONES = [25] # Reduce LR by 10 after reaching milestone epochs
-    
-else:
-    raise ValueError('Invalid DATASET_NAME')
+    # Model settings
+    parser.add_argument('--model_name', type=str, default='HiMrGn', help='Name of the model to use.')
+    parser.add_argument('--backbone_name', type=str, default='SwinT', help='Backbone model name.')
 
+    # HiMrGn-specific settings
+    parser.add_argument('--sources', type=str, nargs='+', default=['image', 'findings', 'impression'],
+                        help='List of source inputs for the model (e.g., image, findings, impression).')
+    parser.add_argument('--targets', type=str, nargs='+', default=['findings', 'impression'],
+                        help='List of target outputs for the model (e.g., findings, impression).')
+    parser.add_argument('--kw_src', type=str, nargs='+', default=['image', 'findings', 'impression'],
+                        help='Keyword arguments for the source inputs of the model (e.g., image, findings, impression).')
+    parser.add_argument('--kw_tgt', type=str, nargs='+', default=['findings', 'impression'],
+                        help='Keyword arguments for the target outputs of the model (e.g., findings, impression).')
+    parser.add_argument('--kw_out', type=str, default=None,
+                        help='Keyword arguments for the output settings of the model (default: None).')
+
+    # Training settings
+    parser.add_argument('--phase', type=str, default='TRAIN_STAGE_1', choices=['TRAIN_STAGE_1', 'TRAIN_STAGE_2', 'TEST', 'INFER'],
+                        help='Phase of the program: TRAIN, TEST, or INFER.')
+    parser.add_argument('--batch_size', type=int, default=2, help='Batch size for training.')
+    parser.add_argument('--epochs', type=int, default=100, help='Number of epochs for training.')
+    parser.add_argument('--lr', type=float, default=5e-5, help='Learning rate.')
+    parser.add_argument('--wd', type=float, default=1e-2, help='Weight decay (L2 regularization).')
+    parser.add_argument('--dropout', type=float, default=0.1, help='Dropout rate.')
+
+    # Device settings
+    parser.add_argument('--cuda_visible_devices', type=str, default="0", help='CUDA visible devices.')
+    parser.add_argument('--seed', type=int, default=123, help='Random seed for reproducibility.')
+
+    # Reload settings
+    parser.add_argument('--reload', action='store_true', help='Reload from a checkpoint.')
+    parser.add_argument('--checkpoint_path_from', type=str, default=None, help='Path to load the checkpoint from.')
+    parser.add_argument('--checkpoint_path_to', type=str, default="/home/chenlb/xray_report_generation/results/test/stage_1", help='Path to save the checkpoint to.')
+
+    return parser.parse_args()
+
+# --- Main Program ---
 if __name__ == "__main__":
-    # --- Choose Inputs/Outputs
-    if MODEL_NAME in ['ClsGen', 'ClsGenInt']:
-        SOURCES = ['image','caption','label','history']
-        TARGETS = ['caption','label']
-        KW_SRC = ['image','caption','label','history']
-        KW_TGT = None
-        KW_OUT = None
-                
-    elif MODEL_NAME == 'VisualTransformer':
-        SOURCES = ['image','caption']
-        TARGETS = ['caption']
-        KW_SRC = ['image','caption'] # kwargs of Classifier
-        KW_TGT = None
-        KW_OUT = None
-        
-    elif MODEL_NAME == 'GumbelTransformer':
-        SOURCES = ['image','caption','caption_length']
-        TARGETS = ['caption','label']
-        KW_SRC = ['image','caption','caption_length'] # kwargs of Classifier
-        KW_TGT = None
-        KW_OUT = None
+    args = parse_args()
 
-    elif MODEL_NAME == 'HiMrGn':
-        SOURCES = ['image', 'findings', 'impression']
-        TARGETS = ['findings','impression']
-        KW_SRC = ['image', 'findings', 'impression'] 
-        KW_TGT = ['findings', 'impression']
-        KW_OUT = None
-        
-    else:
-        raise ValueError('Invalid BACKBONE_NAME')
-        
-    # --- Choose a Dataset ---
-    if DATASET_NAME == 'MIMIC':
-        INPUT_SIZE = (224,224)
-        MAX_VIEWS = 2
-        NUM_LABELS = 114
-        NUM_CLASSES = 2
-        VIEW_POS = ['AP']
+    # Set environment variables
+    os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
+    torch.manual_seed(args.seed)
 
-        if PHASE == "TRAIN_STAGE_1":
-            dataset = MIMIC('/mnt/chenlb/mimic_cxr/', INPUT_SIZE, view_pos=VIEW_POS, max_views=MAX_VIEWS, sources=SOURCES, targets=TARGETS, train_stage=1)
+    # Dataset-specific settings
+    if args.dataset_name == 'MIMIC':
+        input_size = (args.image_size, args.image_size)
+        max_views = 2
+        num_labels = 114
+        num_classes = 2
+        view_pos = ['AP']
+
+        if args.phase == "TRAIN_STAGE_1":
+            dataset = MIMIC(args.dir, input_size, view_pos=view_pos, max_views=max_views,
+                            sources=args.sources, targets=args.targets, train_stage=1)
         else:
-            dataset = MIMIC('/mnt/chenlb/mimic_cxr/', INPUT_SIZE, view_pos=VIEW_POS, max_views=MAX_VIEWS, sources=SOURCES, targets=TARGETS, train_stage=2)
-        train_data, val_data, test_data = dataset.get_subsets(seed=123)
+            dataset = MIMIC(args.dir, input_size, view_pos=view_pos, max_views=max_views,
+                            sources=args.sources, targets=args.targets, train_stage=2)
+        train_data, val_data, test_data = dataset.get_subsets(seed=args.seed)
 
-        VOCAB_SIZE = dataset.tokenizer.vocab_size
-        POSIT_SIZE = dataset.max_len
-        PAD_ID = dataset.tokenizer.pad_token_id
-        COMMENT = 'MaxView{}_NumLabel{}_{}History'.format(MAX_VIEWS, NUM_LABELS, 'No' if 'history' not in SOURCES else '')
-            
-    elif DATASET_NAME == 'NLMCXR':
-        INPUT_SIZE = (256,256)
-        MAX_VIEWS = 2
-        NUM_LABELS = 114
-        NUM_CLASSES = 2
+        vocab_size = dataset.tokenizer.vocab_size
+        posit_size = dataset.max_len
+        pad_id = dataset.tokenizer.pad_token_id
+        comment = f'Stage{args.phase}'
 
-        dataset = NLMCXR('/home/LAB/liudy/Datasets/NLMCXR/', INPUT_SIZE, view_pos=['AP','PA','LATERAL'], max_views=MAX_VIEWS, sources=SOURCES, targets=TARGETS)
-        train_data, val_data, test_data = dataset.get_subsets(seed=123)
-        
-        VOCAB_SIZE = len(dataset.vocab)
-        POSIT_SIZE = dataset.max_len
-        COMMENT = 'MaxView{}_NumLabel{}_{}History'.format(MAX_VIEWS, NUM_LABELS, 'No' if 'history' not in SOURCES else '')
-        
+    elif args.dataset_name == 'NLMCXR':
+        input_size = (256, 256)
+        max_views = 2
+        num_labels = 114
+        num_classes = 2
+
+        dataset = NLMCXR(args.image_dir, input_size, view_pos=['AP', 'PA', 'LATERAL'], max_views=max_views,
+                         sources=['image', 'findings', 'impression'], targets=['findings', 'impression'])
+        train_data, val_data, test_data = dataset.get_subsets(seed=args.seed)
+
+        vocab_size = len(dataset.vocab)
+        posit_size = dataset.max_len
+        comment = f'MaxView{max_views}_NumLabel{num_labels}_NoHistory'
+
     else:
-        raise ValueError('Invalid DATASET_NAME')
+        raise ValueError('Invalid dataset_name')
 
-    # --- Choose a Model ---
-    if MODEL_NAME == 'HiMrGn':
-        LR = 5e-5 # Fastest LR
-        # LR = 3e-4 # Fastest LR
-        WD = 1e-2 # Avoid overfitting with L2 regularization
-        DROPOUT = 0.1 # Avoid overfitting
-        NUM_EMBEDS = 256
-        FWD_DIM = 256
-        
-        NUM_HEADS = 8
-        NUM_LAYERS = 1
-
+    # Model-specific settings
+    if args.model_name == 'HiMrGn':
         swin_transformer = SwinFeatureExtractor()
-
         features_projector = DiseaseFeatureProjector()
-
         findings_decoder = TextDecoder()
         findings_generator = FindingsGenerator(findings_decoder)
-
         co_attention_module = CoAttentionModule()
-
         impression_decoder = TextDecoder()
         impression_generator = ImpressionGenerator(impression_decoder)
-
         cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor()
 
-        model = HiMrGn(image_encoder=swin_transformer, 
-                       features_projector=features_projector, 
-                       findings_decoder=findings_generator, 
+        model = HiMrGn(image_encoder=swin_transformer,
+                       features_projector=features_projector,
+                       findings_decoder=findings_generator,
                        co_attention_module=co_attention_module,
                        impression_decoder=impression_generator,
                        cxr_bert_feature_extractor=cxr_bert_feature_extractor)
-        
 
         # Compute parameters for each module
         module_parameters = {
@@ -204,19 +189,17 @@ if __name__ == "__main__":
         for module_name, param_count in module_parameters.items():
             print(f"{module_name}: {param_count} parameters")
 
-        visual_parameters(modules=module_parameters.keys(), parameters=module_parameters.values())
-        
     else:
-        raise ValueError('Invalid MODEL_NAME')
-    
-    # --- Main program ---
-    train_loader = data.DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, drop_last=True)
-    val_loader = data.DataLoader(val_data, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
-    test_loader = data.DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
+        raise ValueError('Invalid model_name')
+
+    # Data loaders
+    train_loader = data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
+    val_loader = data.DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=4)
+    test_loader = data.DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
     model = nn.DataParallel(model).cuda()
-    optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=LR, weight_decay=WD)
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=MILESTONES)
+    optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=args.wd)
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[25, 40, 55, 70, 85])
 
     print('Total Parameters:', sum(p.numel() for p in model.parameters()))
     
@@ -225,56 +208,50 @@ if __name__ == "__main__":
 
     now = datetime.now()  # current date and time
     date_time = now.strftime("%Y-%m-%d_%H:%M:%S")
-    # checkpoint_path_from = 'checkpoints/2023-02-16_22:46:43_{}_{}_{}_{}.pt'.format(DATASET_NAME,MODEL_NAME,BACKBONE_NAME,COMMENT)
-    checkpoint_path_from = 'checkpoints/{}_{}_{}_{}_{}.pt'.format(date_time, DATASET_NAME,MODEL_NAME,BACKBONE_NAME,COMMENT)
-    checkpoint_path_to = 'checkpoints/{}_{}_{}_{}_{}.pt'.format(date_time, DATASET_NAME,MODEL_NAME,BACKBONE_NAME,COMMENT)
     
-    if RELOAD:
-        last_epoch, (best_metric, test_metric) = load(checkpoint_path_from, model, optimizer, scheduler) # Reload
-        # last_epoch, (best_metric, test_metric) = load(checkpoint_path_from, model) # Fine-tune
-        print('Reload From: {} | Last Epoch: {} | Validation Metric: {} | Test Metric: {}'.format(checkpoint_path_from, last_epoch, best_metric, test_metric))
+    # Load checkpoint if needed
+    if args.reload and args.checkpoint_path_from:
+        last_epoch, (best_metric, test_metric) = load(args.checkpoint_path_from, model, optimizer, scheduler)
+        print(f'Reloaded from {args.checkpoint_path_from}: Last Epoch {last_epoch}, Best Metric {best_metric}, Test Metric {test_metric}')
 
-    if PHASE == 'TRAIN_STAGE_1':
-        criterion = StageOneLoss(pad_id=PAD_ID).cuda()
-
+    # Training phase
+    if args.phase == 'TRAIN_STAGE_1':
+        criterion = StageOneLoss(pad_id=pad_id).cuda()
         scaler = torch.cuda.amp.GradScaler()
-        
-        for epoch in range(last_epoch+1, EPOCHS):
-            print('Epoch:', epoch)
-            train_loss = train(train_loader, model, optimizer, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, scaler=scaler, train_stage=1)
-            val_loss = test(val_loader, model, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, return_results=False, train_stage=1)
-            test_loss = test(test_loader, model, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, return_results=False, train_stage=1)
+
+        for epoch in range(last_epoch+1, args.epochs):
+            print(f'Epoch: {epoch}')
+            train_loss = train(train_loader, model, optimizer, criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, scaler=scaler, train_stage=1)
+            val_loss = test(val_loader, model, criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
+            test_loss = test(test_loader, model, criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
             
             scheduler.step()
-            
             if best_metric > val_loss:
                 best_metric = val_loss
-                save(checkpoint_path_to, model, optimizer, scheduler, epoch, (val_loss, test_loss))
-                print('New Best Metric: {}'.format(best_metric)) 
-                print('Saved To:', checkpoint_path_to)
+                save(args.checkpoint_path_to, model, optimizer, scheduler, epoch, (val_loss, test_loss))
+                print(f'New Best Metric: {best_metric}')
+                print(f'Saved To: {args.checkpoint_path_to}')
 
-    elif PHASE == 'TRAIN_STAGE_2':
-        criterion = CombinedLoss(pad_id=PAD_ID).cuda()
-
+    elif args.phase == 'TRAIN_STAGE_2':
+        criterion = CombinedLoss(pad_id=pad_id).cuda()
         scaler = torch.cuda.amp.GradScaler()
-        
-        for epoch in range(last_epoch+1, EPOCHS):
-            print('Epoch:', epoch)
-            train_loss = train(train_loader, model, optimizer, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, scaler=scaler, train_stage=2)
-            val_loss = test(val_loader, model, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, return_results=False, train_stage=2)
-            test_loss = test(test_loader, model, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, return_results=False, train_stage=2)
-            
+
+        for epoch in range(last_epoch + 1, args.epochs):
+            print(f'Epoch: {epoch}')
+            train_loss = train(train_loader, model, optimizer, criterion, device='cuda', scaler=scaler, train_stage=2)
+            val_loss = test(val_loader, model, criterion, device='cuda', return_results=False, train_stage=2)
+            test_loss = test(test_loader, model, criterion, device='cuda', return_results=False, train_stage=2)
+
             scheduler.step()
-            
             if best_metric > val_loss:
                 best_metric = val_loss
-                save(checkpoint_path_to, model, optimizer, scheduler, epoch, (val_loss, test_loss))
-                print('New Best Metric: {}'.format(best_metric)) 
-                print('Saved To:', checkpoint_path_to)
+                save(args.checkpoint_path_to, model, optimizer, scheduler, epoch, (val_loss, test_loss))
+                print(f'New Best Metric: {best_metric}')
+                print(f'Saved To: {args.checkpoint_path_to}')
     
-    elif PHASE == 'TEST':
+    elif args.phase == 'TEST':
         # Output the file list for inspection
-        out_file_img = open('outputs/{}_{}_{}_{}_Img.txt'.format(DATASET_NAME, MODEL_NAME, BACKBONE_NAME, COMMENT), 'w')
+        out_file_img = open('outputs/{}_{}_{}_{}_Img.txt'.format(args.dataset_name, args.model_name, args.backbone_name, comment), 'w')
         for i in range(len(test_data.idx_pidsid)):
             out_file_img.write(test_data.idx_pidsid[i][0] + ' ' + test_data.idx_pidsid[i][1] + '\n')
             
@@ -315,7 +292,7 @@ if __name__ == "__main__":
         # print('Micro Precision: {}'.format(metrics.precision_score(test_targets.cpu()[...,:NUM_LABELS] == 1, test_outputs.cpu()[...,:NUM_LABELS,1] > threshold, average='micro')))
         # print('Micro Recall   : {}'.format(metrics.recall_score(test_targets.cpu()[...,:NUM_LABELS] == 1, test_outputs.cpu()[...,:NUM_LABELS,1] > threshold, average='micro')))
         
-    elif PHASE == 'INFER':
+    elif args.phase == 'INFER':
         # txt_test_outputs, txt_test_targets = infer(test_loader, model, device='cuda', threshold=0.25)
         txt_test_outputs, txt_test_targets = infer(test_loader, model, device='cuda')
 
@@ -324,9 +301,9 @@ if __name__ == "__main__":
         # gen_outputs = txt_test_outputs[0]
         # gen_targets = txt_test_targets[0]
         
-        out_file_ref = open('outputs/x_{}_{}_{}_{}_Ref.txt'.format(DATASET_NAME, MODEL_NAME, BACKBONE_NAME, COMMENT), 'w')
-        out_file_hyp = open('outputs/x_{}_{}_{}_{}_Hyp.txt'.format(DATASET_NAME, MODEL_NAME, BACKBONE_NAME, COMMENT), 'w')
-        out_file_lbl = open('outputs/x_{}_{}_{}_{}_Lbl.txt'.format(DATASET_NAME, MODEL_NAME, BACKBONE_NAME, COMMENT), 'w')
+        out_file_ref = open('outputs/x_{}_{}_{}_{}_Ref.txt'.format(args.dataset_name, args.model_name, args.backbone_name, comment), 'w')
+        out_file_hyp = open('outputs/x_{}_{}_{}_{}_Hyp.txt'.format(args.dataset_name, args.model_name, args.backbone_name, comment), 'w')
+        out_file_lbl = open('outputs/x_{}_{}_{}_{}_Lbl.txt'.format(args.dataset_name, args.model_name, args.backbone_name, comment), 'w')
         
         for i in range(len(gen_outputs)):
             candidate = ''
