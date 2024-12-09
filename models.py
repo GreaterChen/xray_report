@@ -54,10 +54,10 @@ class SwinFeatureExtractor(nn.Module):
         # 映射到低维视觉特征 Fv
         self.feature_proj = nn.Sequential(
             nn.Conv2d(self.image_encoder.feature_info[-1]['num_chs'], 512, kernel_size=1),
+            nn.BatchNorm2d(512),
             nn.ReLU(),
             nn.AdaptiveAvgPool2d((1, 1))  # 提取全局特征
         )
-
     
     def forward(self, image):
         """
@@ -77,8 +77,25 @@ class SwinFeatureExtractor(nn.Module):
         
         return fv
     
+class ViTFeatureExtractor(nn.Module):
+    def __init__(self, model_name='vit_base_patch16_224', pretrained=True):
+        super().__init__()
+        # 加载预训练的 ViT base版本 (768维)
+        self.image_encoder = create_model(model_name, pretrained=pretrained)
+        
+    def forward(self, image):
+        """
+        image: 输入的图像，形状为 (B, C, H, W)
+        返回:
+        features: ViT最后一层的输出特征，形状为 (B, 768)
+        """
+        # 获取ViT最后一层[CLS] token的输出
+        features = self.image_encoder.forward_features(image)
+        
+        return features
+    
 class DiseaseFeatureProjector(nn.Module):
-    def __init__(self, input_dim=512, num_diseases=512, feature_dim=512):
+    def __init__(self, input_dim=512, num_diseases=1024, feature_dim=512):
         """
         Args:
             input_dim: 输入视觉特征 x 的维度（Swin Transformer 输出的维度 C）。
