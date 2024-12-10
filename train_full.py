@@ -159,8 +159,9 @@ if __name__ == "__main__":
 
     # Model-specific settings
     if args.model_name == 'HiMrGn':
-        swin_transformer = SwinFeatureExtractor()
-        features_projector = DiseaseFeatureProjector()
+        # swin_transformer = SwinFeatureExtractor()
+        vit_transformer = ViTFeatureExtractor()
+        # features_projector = DiseaseFeatureProjector()
         findings_decoder = TextDecoder()
         findings_generator = FindingsGenerator(findings_decoder)
         co_attention_module = CoAttentionModule()
@@ -168,8 +169,8 @@ if __name__ == "__main__":
         impression_generator = ImpressionGenerator(impression_decoder)
         cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor()
 
-        model = HiMrGn(image_encoder=swin_transformer,
-                       features_projector=features_projector,
+        model = HiMrGn(image_encoder=vit_transformer,
+                       features_projector=None,
                        findings_decoder=findings_generator,
                        co_attention_module=co_attention_module,
                        impression_decoder=impression_generator,
@@ -177,8 +178,9 @@ if __name__ == "__main__":
 
         # Compute parameters for each module
         module_parameters = {
-            "Swin Transformer": count_parameters(swin_transformer),
-            "Features Projector": count_parameters(features_projector),
+            # "Swin Transformer": count_parameters(swin_transformer),
+            "ViT Transformer": count_parameters(vit_transformer),
+            # "Features Projector": count_parameters(features_projector),
             "Findings Generator": count_parameters(findings_generator),
             "Co-Attention Module": count_parameters(co_attention_module),
             "Impression Generator": count_parameters(impression_generator),

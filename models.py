@@ -53,8 +53,8 @@ class SwinFeatureExtractor(nn.Module):
         
         # 映射到低维视觉特征 Fv
         self.feature_proj = nn.Sequential(
-            nn.Conv2d(self.image_encoder.feature_info[-1]['num_chs'], 512, kernel_size=1),
-            nn.BatchNorm2d(512),
+            nn.Conv2d(self.image_encoder.feature_info[-1]['num_chs'], 768, kernel_size=1),
+            nn.BatchNorm2d(768),
             nn.ReLU(),
             nn.AdaptiveAvgPool2d((1, 1))  # 提取全局特征
         )
@@ -63,7 +63,7 @@ class SwinFeatureExtractor(nn.Module):
         """
         image: 输入的图像，形状为 (B, C, H, W)
         返回:
-        Fv: 视觉特征，形状为 (B, 512)
+        Fv: 视觉特征，形状为 (B, 768)
         """
         # 提取图像的多层特征
         features = self.image_encoder(image)
@@ -73,7 +73,7 @@ class SwinFeatureExtractor(nn.Module):
         
         # 仅使用最后一层特征进行降维和处理
         fv = self.feature_proj(features_last)  
-        fv = fv.squeeze(-1).squeeze(-1)      # 输出形状 (B, 512)
+        fv = fv.squeeze(-1).squeeze(-1)      # 输出形状 (B, 768)
         
         return fv
     
@@ -87,15 +87,15 @@ class ViTFeatureExtractor(nn.Module):
         """
         image: 输入的图像，形状为 (B, C, H, W)
         返回:
-        features: ViT最后一层的输出特征，形状为 (B, 768)
+        features: ViT最后一层的输出特征，形状为 (B, 768) ..
         """
         # 获取ViT最后一层[CLS] token的输出
         features = self.image_encoder.forward_features(image)
-        
+
         return features
     
 class DiseaseFeatureProjector(nn.Module):
-    def __init__(self, input_dim=512, num_diseases=1024, feature_dim=512):
+    def __init__(self, input_dim=768, num_diseases=512, feature_dim=768):
         """
         Args:
             input_dim: 输入视觉特征 x 的维度（Swin Transformer 输出的维度 C）。
@@ -173,11 +173,7 @@ class TextDecoder(nn.Module):
         batch_size = fv.size(0)
         memory = fv.permute(1, 0, 2)  # 转换为 (N_v, B, C_v)
 
-        assert not torch.isnan(fv).any(), "fv contains NaN values!"
-        assert not torch.isinf(fv).any(), "fv contains Inf values!"
         if target_sequence is not None:  # 训练阶段
-            assert not torch.isnan(target_sequence).any(), "target_sequence contains NaN values!"
-            assert not torch.isinf(target_sequence).any(), "target_sequence contains Inf values!"
             seq_len = target_sequence.size(1)
 
             # 嵌入目标序列并加上 Sinusoidal 位置编码
@@ -244,11 +240,6 @@ class TextDecoder(nn.Module):
 
             output = outputs  # 返回生成的序列 (B, max_len)
             F_t = torch.stack(F_t_list, dim=1)  # 拼接 F_t，形状 (B, max_len, hidden_dim)
-
-        # 添加检查
-        if torch.isnan(decoder_output).any():
-            print("NaN detected in decoder_output")
-            self.forward(fv, target_sequence)
 
         return output, F_t
     
@@ -416,9 +407,7 @@ class HiMrGn(nn.Module):
         
     def forward(self, image, findings=None, impression=None, train_stage=2, idx=None):
         if train_stage == 1:
-            x = self.image_encoder(image[0])   # (B, C)
-
-            F_v = self.features_projector(x)    # (B, Nv, Cv)
+            F_v = self.image_encoder(image[0])   # (B, Nv, Cv)
 
             findings, _ = self.findings_decoder(F_v, findings)    # (B, max_len, vocab_size), (B, max_len, hidden_dim)         
 
