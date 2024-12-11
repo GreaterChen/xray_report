@@ -108,7 +108,7 @@ class NIHCXR(data.Dataset): # Chest X-Ray 14 Dataset
 class MIMIC(data.Dataset): # MIMIC-CXR Dataset
     def __init__(self, directory, input_size=(224,224), random_transform=True,
                 view_pos=['AP'], max_views=2, sources=['image','history'], targets=['label'], 
-                max_len=512, model_name='microsoft/BiomedVLP-CXR-BERT-specialized', train_stage=2):
+                max_len=256, model_name='microsoft/BiomedVLP-CXR-BERT-specialized', train_stage=2):
 
         self.source_sections = ['INDICATION:', 'HISTORY:', 'CLINICAL HISTORY:', 'REASON FOR EXAM:', 'REASON FOR EXAMINATION:', 'CLINICAL INFORMATION:', 'CLINICAL INDICATION:', 'PATIENT HISTORY:']
         self.target_sections = ['FINDINGS:', 'IMPRESSION:']
@@ -195,12 +195,12 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                 
         return sources if len(sources) > 1 else sources[0], targets if len(targets) > 1 else targets[0], idx
     
-    def get_embeddings(self, text, max_len=512):
+    def get_embeddings(self, text):
         # Tokenize
         encoded = self.tokenizer.encode_plus(
             text,
             add_special_tokens=True,
-            max_length=max_len,
+            max_length=self.max_len,
             padding='max_length',
             truncation=True,
             return_tensors='pt'  # 返回PyTorch张量

@@ -160,11 +160,11 @@ if __name__ == "__main__":
     # Model-specific settings
     if args.model_name == 'HiMrGn':
         swin_transformer = SwinFeatureExtractor(hidden_dim=768)
-        features_projector = DiseaseFeatureProjector(input_dim=768, num_diseases=512, feature_dim=768)
-        findings_decoder = TextDecoder(input_dim=512, hidden_dim=768)
+        features_projector = DiseaseFeatureProjector(input_dim=768, num_diseases=256, feature_dim=768)
+        findings_decoder = TextDecoder(input_dim=256, hidden_dim=768)
         findings_generator = FindingsGenerator(findings_decoder)
         co_attention_module = CoAttentionModule()
-        impression_decoder = TextDecoder(input_dim=512, hidden_dim=768)
+        impression_decoder = TextDecoder(input_dim=256, hidden_dim=768)
         impression_generator = ImpressionGenerator(impression_decoder)
         cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor()
 
