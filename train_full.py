@@ -65,11 +65,11 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # Data input settings
-    parser.add_argument('--dir', type=str, default='/mnt/chenlb/mimic_cxr',
+    parser.add_argument('--dir', type=str, default='/mnt/chenlb/datasets/mimic_cxr/',
                         help='Path to the directory.')
-    parser.add_argument('--image_dir', type=str, default='/mnt/chenlb/mimic_cxr/images',
+    parser.add_argument('--image_dir', type=str, default='/mnt/chenlb/datasets/mimic_cxr/images/',
                         help='Path to the directory containing the image data.')
-    parser.add_argument('--ann_path', type=str, default='/mnt/chenlb/mimic_cxr/mimic_annotation_promptmrg_new.json',
+    parser.add_argument('--ann_path', type=str, default='/mnt/chenlb/datasets/mimic_cxr/mimic_annotation_promptmrg_new.json',
                         help='Path to the annotation file.')
     parser.add_argument('--image_size', type=int, default=224, help='Input image size.')
     parser.add_argument('--dataset_name', type=str, default='MIMIC', choices=['MIMIC', 'NIHCXR', 'NLMCXR'],
@@ -80,11 +80,11 @@ def parse_args():
     parser.add_argument('--backbone_name', type=str, default='SwinT', help='Backbone model name.')
 
     # HiMrGn-specific settings
-    parser.add_argument('--sources', type=str, nargs='+', default=['image', 'findings', 'impression'],
+    parser.add_argument('--sources', type=str, nargs='+', default=['image', 'findings', 'impression', 'history'],
                         help='List of source inputs for the model (e.g., image, findings, impression).')
     parser.add_argument('--targets', type=str, nargs='+', default=['findings', 'impression'],
                         help='List of target outputs for the model (e.g., findings, impression).')
-    parser.add_argument('--kw_src', type=str, nargs='+', default=['image', 'findings', 'impression'],
+    parser.add_argument('--kw_src', type=str, nargs='+', default=['image', 'findings', 'impression', 'history'],
                         help='Keyword arguments for the source inputs of the model (e.g., image, findings, impression).')
     parser.add_argument('--kw_tgt', type=str, nargs='+', default=['findings', 'impression'],
                         help='Keyword arguments for the target outputs of the model (e.g., findings, impression).')
@@ -159,12 +159,12 @@ if __name__ == "__main__":
 
     # Model-specific settings
     if args.model_name == 'HiMrGn':
-        swin_transformer = SwinFeatureExtractor()
-        features_projector = DiseaseFeatureProjector()
-        findings_decoder = TextDecoder()
+        swin_transformer = SwinFeatureExtractor(hidden_dim=768)
+        features_projector = DiseaseFeatureProjector(input_dim=768, num_diseases=512, feature_dim=768)
+        findings_decoder = TextDecoder(input_dim=512, hidden_dim=768)
         findings_generator = FindingsGenerator(findings_decoder)
         co_attention_module = CoAttentionModule()
-        impression_decoder = TextDecoder()
+        impression_decoder = TextDecoder(input_dim=512, hidden_dim=768)
         impression_generator = ImpressionGenerator(impression_decoder)
         cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor()
 
@@ -193,9 +193,9 @@ if __name__ == "__main__":
         raise ValueError('Invalid model_name')
 
     # Data loaders
-    train_loader = data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
-    val_loader = data.DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=4)
-    test_loader = data.DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=4)
+    train_loader = data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=1, drop_last=True)
+    val_loader = data.DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=1)
+    test_loader = data.DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=1)
 
     model = nn.DataParallel(model).cuda()
     optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=args.wd)

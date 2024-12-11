@@ -238,6 +238,14 @@ def plot_length_distribution(distribution, title):
 	plt.title(title)
 	plt.xlabel("Token Length")
 	plt.ylabel("Count")
-	plt.xticks(lengths)
+	
+	# 计算合适的刻度间隔
+	max_length = max(lengths)
+	min_length = min(lengths)
+	step = max(1, (max_length - min_length) // 5)  # 最多显示约10个刻度
+	
+	# 设置x轴刻度
+	plt.xticks(range(min_length, max_length + 1, step))
+	
 	plt.tight_layout()
 	plt.savefig(f"/home/chenlb/xray_report_generation/results/{title.replace(' ', '_')}.png")

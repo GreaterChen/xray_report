@@ -14,7 +14,7 @@ from random import shuffle
 import sentencepiece as spm
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoModel
 from tqdm import tqdm
 from collections import defaultdict
 from utils import *
@@ -110,11 +110,10 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                 view_pos=['AP'], max_views=2, sources=['image','history'], targets=['label'], 
                 max_len=512, model_name='microsoft/BiomedVLP-CXR-BERT-specialized', train_stage=2):
 
-        # self.source_sections = ['INDICATION:', 'HISTORY:', 'CLINICAL HISTORY:', 'REASON FOR EXAM:', 'REASON FOR EXAMINATION:', 'CLINICAL INFORMATION:', 'CLINICAL INDICATION:', 'PATIENT HISTORY:']
-        self.source_sections = []
-        # self.target_sections = ['FINDINGS:']
+        self.source_sections = ['INDICATION:', 'HISTORY:', 'CLINICAL HISTORY:', 'REASON FOR EXAM:', 'REASON FOR EXAMINATION:', 'CLINICAL INFORMATION:', 'CLINICAL INDICATION:', 'PATIENT HISTORY:']
         self.target_sections = ['FINDINGS:', 'IMPRESSION:']
         # 使用与 CXR-BERT 一致的 tokenizer
+        self.embedding_model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         
         self.sources = sources # Choose which section as input
@@ -143,7 +142,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
 
     def __len__(self):
         return len(self.idx_pidsid)
-#rewrite
+    
     def __getitem__(self, idx):
         idx = self.idx_pidsid[idx] 
 
@@ -168,17 +167,23 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         impression = info.get('IMPRESSION:', '')
 
         # 使用 CXR-BERT tokenizer 对 FINDINGS 和 IMPRESSION 进行编码
-        encoded_findings = self.tokenizer.encode(findings, add_special_tokens=True, max_length=self.max_len, truncation=True, padding='max_length')
-        encoded_impression = self.tokenizer.encode(impression, add_special_tokens=True, max_length=self.max_len, truncation=True, padding='max_length')
+        # encoded_findings = self.tokenizer.encode(findings, add_special_tokens=True, max_length=self.max_len, truncation=True, padding='max_length')
+        # encoded_impression = self.tokenizer.encode(impression, add_special_tokens=True, max_length=self.max_len, truncation=True, padding='max_length')
+        findings = self.get_embeddings(findings, max_len=self.max_len)
+        impression = self.get_embeddings(impression, max_len=self.max_len)
 
-        findings = np.array(encoded_findings, dtype=np.int64)
-        impression = np.array(encoded_impression, dtype=np.int64)
+        # findings = np.array(encoded_findings, dtype=np.int16)
+        # impression = np.array(encoded_impression, dtype=np.int16)
 
-        # 将 FINDINGS 和 IMPRESSION 填充到最大长度
-        findings = np.pad(findings, (0, self.max_len - len(findings)), constant_values=self.tokenizer.pad_token_id)
-        impression = np.pad(impression, (0, self.max_len - len(impression)), constant_values=self.tokenizer.pad_token_id)
+        source_info = []
+        for section, content in info.items():
+            if section in self.source_sections:
+                source_info.append(content)
+        source_info = ' '.join(source_info)
 
-        target_info = []
+        # encoded_source_info = self.tokenizer.encode(source_info, add_special_tokens=True, max_length=self.max_len, truncation=True, padding='max_length')
+        # source_info = np.array(encoded_source_info, dtype=np.int16)
+        source_info = self.get_embeddings(source_info, max_len=self.max_len)
 
         for i in range(len(self.sources)):
             if self.sources[i] == 'image':
@@ -187,7 +192,9 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                 sources.append(findings)
             elif self.sources[i] == 'impression':
                 sources.append(impression)
-                
+            elif self.sources[i] == 'history':
+                sources.append(source_info)
+
         for i in range(len(self.targets)):
             if self.targets[i] == 'findings':
                 targets.append(findings)
@@ -195,13 +202,33 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                 targets.append(impression)
                 
         return sources if len(sources) > 1 else sources[0], targets if len(targets) > 1 else targets[0], idx
+    
+    def get_embeddings(self, text, max_len=512):
+        # Tokenize
+        encoded = self.tokenizer.encode_plus(
+            text,
+            add_special_tokens=True,
+            max_length=max_len,
+            padding='max_length',
+            truncation=True,
+            return_tensors='pt'  # 返回PyTorch张量
+        )
+        
+        # 获取embedding
+        with torch.no_grad():  # 不需要梯度
+            outputs = self.embedding_model(**encoded)
+            # outputs.last_hidden_state 形状为 [batch_size, sequence_length, hidden_size]
+            embeddings = outputs.last_hidden_state.squeeze(0)
+            
+        return embeddings
 
     def __get_reports_images(self, file_name='reports.json'):
-        caption_file = json.load(open(self.dir + file_name, 'r'))
+        caption_file = json.load(open(os.path.join(self.dir, file_name), 'r'))
         img_captions = {}
         img_files = {}
         self.findings_token_distribution = defaultdict(int)
         self.impression_token_distribution = defaultdict(int)
+        self.source_info_token_distribution = defaultdict(int)
         miss_cnt = 0
         for file_name, report in tqdm(caption_file.items()):
             k = file_name[-23:-4]
@@ -209,34 +236,38 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             pid,sid = k.split('/')
             try:
                 # List all available images in each folder
-                # file_list = os.listdir(self.dir + 'images/' + pid + '/' + sid)
-                file_list = os.listdir(self.dir + 'images/' + p + '/' + pid + '/' + sid)
+                file_list = os.listdir(os.path.join(self.dir, 'images', p, pid, sid))
 
-                # Select only images in self.view_pos
-                # file_list = [f for f in file_list if self.img_positions[f[:-4]] in self.view_pos]
-                # Make sure there is at least one image in each folder, and a non-empty findings section in each report
                 if len(file_list):
                     for i, file in enumerate(file_list): 
                         img_files[(pid,sid,file[:-4])] = file
                         img_captions[(pid,sid,file[:-4])] = report    # Include FINDINGS and IMPRESSION
             
-                        # findings = report.get('FINDINGS:', '')
-                        # impression = report.get('IMPRESSION:', '')
+                        findings = report.get('FINDINGS:', '')
+                        impression = report.get('IMPRESSION:', '')
 
-                        # # 对 FINDINGS 和 IMPRESSION 进行编码
-                        # origin_encoded_findings = self.tokenizer.encode(findings, add_special_tokens=True)
-                        # origin_encoded_impression = self.tokenizer.encode(impression, add_special_tokens=True)
+                        source_info = []
+                        for section, content in report.items():
+                            if section in self.source_sections:
+                                source_info.append(content)
+                        source_info = ' '.join(source_info)
 
-                        # # 更新分布字典
-                        # self.findings_token_distribution[len(origin_encoded_findings)] += 1
-                        # self.impression_token_distribution[len(origin_encoded_impression)] += 1
+                        # 对 FINDINGS 和 IMPRESSION 进行编码
+                        origin_encoded_findings = self.tokenizer.encode(findings, add_special_tokens=True)
+                        origin_encoded_impression = self.tokenizer.encode(impression, add_special_tokens=True)
+                        origin_encoded_source_info = self.tokenizer.encode(source_info, add_special_tokens=True)
 
+                        # 更新分布字典
+                        self.findings_token_distribution[len(origin_encoded_findings)] += 1
+                        self.impression_token_distribution[len(origin_encoded_impression)] += 1
+                        self.source_info_token_distribution[len(origin_encoded_source_info)] += 1
             except Exception as e:
                 miss_cnt += 1
                 pass
 
-        # plot_length_distribution(self.findings_token_distribution, "Findings Token Length Distribution")
-        # plot_length_distribution(self.impression_token_distribution, "Impression Token Length Distribution")
+        plot_length_distribution(self.findings_token_distribution, "Findings Token Length Distribution")
+        plot_length_distribution(self.impression_token_distribution, "Impression Token Length Distribution")
+        plot_length_distribution(self.source_info_token_distribution, "History Token Length Distribution")
         print("无对应文件夹数量：", miss_cnt)
         return img_captions, img_files
 

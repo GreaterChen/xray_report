@@ -46,15 +46,15 @@ class CXR_BERT_FeatureExtractor(nn.Module):
 
 
 class SwinFeatureExtractor(nn.Module):
-    def __init__(self, image_encoder_name='swin_large_patch4_window7_224', pretrained=True):
+    def __init__(self, image_encoder_name='swin_large_patch4_window7_224', hidden_dim=768, pretrained=True):
         super().__init__()
         # 加载预训练的 Swin Transformer
         self.image_encoder = create_model(image_encoder_name, pretrained=pretrained, features_only=True)
         
         # 映射到低维视觉特征 Fv
         self.feature_proj = nn.Sequential(
-            nn.Conv2d(self.image_encoder.feature_info[-1]['num_chs'], 512, kernel_size=1),
-            nn.BatchNorm2d(512),
+            nn.Conv2d(self.image_encoder.feature_info[-1]['num_chs'], hidden_dim, kernel_size=1),
+            nn.BatchNorm2d(hidden_dim),
             nn.ReLU(),
             nn.AdaptiveAvgPool2d((1, 1))  # 提取全局特征
         )
@@ -63,7 +63,7 @@ class SwinFeatureExtractor(nn.Module):
         """
         image: 输入的图像，形状为 (B, C, H, W)
         返回:
-        Fv: 视觉特征，形状为 (B, 512)
+        Fv: 视觉特征，形状为 (B, hidden_dim)
         """
         # 提取图像的多层特征
         features = self.image_encoder(image)
@@ -73,7 +73,7 @@ class SwinFeatureExtractor(nn.Module):
         
         # 仅使用最后一层特征进行降维和处理
         fv = self.feature_proj(features_last)  
-        fv = fv.squeeze(-1).squeeze(-1)      # 输出形状 (B, 512)
+        fv = fv.squeeze(-1).squeeze(-1)      # 输出形状 (B, hidden_dim)
         
         return fv
     
@@ -95,7 +95,7 @@ class ViTFeatureExtractor(nn.Module):
         return features
     
 class DiseaseFeatureProjector(nn.Module):
-    def __init__(self, input_dim=512, num_diseases=1024, feature_dim=512):
+    def __init__(self, input_dim=768, num_diseases=512, feature_dim=768):
         """
         Args:
             input_dim: 输入视觉特征 x 的维度（Swin Transformer 输出的维度 C）。
@@ -127,7 +127,7 @@ class DiseaseFeatureProjector(nn.Module):
         return F_v
     
 class TextDecoder(nn.Module):
-    def __init__(self, tokenizer_model_name='microsoft/BiomedVLP-CXR-BERT-specialized', input_dim=512, hidden_dim=512, num_head=8, num_layers=6, max_len=512):
+    def __init__(self, tokenizer_model_name='microsoft/BiomedVLP-CXR-BERT-specialized', input_dim=512, hidden_dim=768, num_head=8, num_layers=6, max_len=512):
         super(TextDecoder, self).__init__()
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name, trust_remote_code=True)  # 使用 CXR-BERT 的 tokenizer
         self.vocab_size = self.tokenizer.vocab_size
@@ -414,7 +414,7 @@ class HiMrGn(nn.Module):
         self.impression_decoder = impression_decoder
         self.cxr_bert_feature_extractor = cxr_bert_feature_extractor
         
-    def forward(self, image, findings=None, impression=None, train_stage=2, idx=None):
+    def forward(self, image, findings=None, impression=None, history=None, train_stage=2, idx=None):
         if train_stage == 1:
             x = self.image_encoder(image[0])   # (B, C)
 
