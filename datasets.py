@@ -167,22 +167,14 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         impression = info.get('IMPRESSION:', '')
 
         # 使用 CXR-BERT tokenizer 对 FINDINGS 和 IMPRESSION 进行编码
-        # encoded_findings = self.tokenizer.encode(findings, add_special_tokens=True, max_length=self.max_len, truncation=True, padding='max_length')
-        # encoded_impression = self.tokenizer.encode(impression, add_special_tokens=True, max_length=self.max_len, truncation=True, padding='max_length')
         findings = self.get_embeddings(findings, max_len=self.max_len)
         impression = self.get_embeddings(impression, max_len=self.max_len)
-
-        # findings = np.array(encoded_findings, dtype=np.int16)
-        # impression = np.array(encoded_impression, dtype=np.int16)
 
         source_info = []
         for section, content in info.items():
             if section in self.source_sections:
                 source_info.append(content)
         source_info = ' '.join(source_info)
-
-        # encoded_source_info = self.tokenizer.encode(source_info, add_special_tokens=True, max_length=self.max_len, truncation=True, padding='max_length')
-        # source_info = np.array(encoded_source_info, dtype=np.int16)
         source_info = self.get_embeddings(source_info, max_len=self.max_len)
 
         for i in range(len(self.sources)):

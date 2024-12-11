@@ -131,7 +131,6 @@ class TextDecoder(nn.Module):
         super(TextDecoder, self).__init__()
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name, trust_remote_code=True)  # 使用 CXR-BERT 的 tokenizer
         self.vocab_size = self.tokenizer.vocab_size
-        self.embedding = nn.Embedding(self.vocab_size, hidden_dim)  # 词嵌入
         self.transformer_decoder = nn.TransformerDecoder(
             nn.TransformerDecoderLayer(d_model=hidden_dim, nhead=num_head), num_layers=num_layers
         ) 
@@ -161,11 +160,11 @@ class TextDecoder(nn.Module):
         
         return pe.unsqueeze(0)  # (1, max_len, d_model)
 
-    def forward(self, fv, target_sequence=None):
+    def forward(self, fv, target_embed=None):
         """
         Args:
             fv: 疾病特征矩阵，形状 (B, N_v, C_v)，作为 memory。
-            target_sequence: 编码的目标序列，形状 (B, max_len)，仅在训练阶段提供。
+            target_embed: 已经是embedding形式的目标序列，形状 (B, max_len, hidden_dim)
         Returns:
             output: 生成的词汇分布，形状 (B, max_len, vocab_size)。
             F_t: 文本特征矩阵，形状 (B, max_len, hidden_dim)。
@@ -173,15 +172,10 @@ class TextDecoder(nn.Module):
         batch_size = fv.size(0)
         memory = fv.permute(1, 0, 2)  # 转换为 (N_v, B, C_v)
 
-        assert not torch.isnan(fv).any(), "fv contains NaN values!"
-        assert not torch.isinf(fv).any(), "fv contains Inf values!"
-        if target_sequence is not None:  # 训练阶段
-            assert not torch.isnan(target_sequence).any(), "target_sequence contains NaN values!"
-            assert not torch.isinf(target_sequence).any(), "target_sequence contains Inf values!"
-            seq_len = target_sequence.size(1)
+        if target_embed is not None:  # 训练阶段
+            seq_len = target_embed.size(1)
 
             # 嵌入目标序列并加上 Sinusoidal 位置编码
-            target_embed = self.embedding(target_sequence)  # (B, seq_len, hidden_dim)
             position_encoding = self.positional_encoding[:, :seq_len, :].to(target_embed.device)  # 动态调整长度    # (1, seq_len, hidden_dim)
             target_embed = target_embed + position_encoding  # (B, seq_len, hidden_dim)
 
@@ -202,53 +196,47 @@ class TextDecoder(nn.Module):
 
             # 生成 F_t：对每个隐藏状态应用 softmax
             F_t = F.softmax(decoder_output, dim=-1)  # (B, seq_len, hidden_dim)
-            # F_t = F.softmax(decoder_output / torch.sqrt(torch.tensor(self.hidden_dim, dtype=torch.float32)), dim=-1)
 
         else:  # 测试阶段
+            # 在测试阶段，我们需要保持原有的token生成逻辑
             outputs = torch.zeros(batch_size, self.max_len, dtype=torch.long).fill_(self.pad_id).to(fv.device)
-            outputs[:, 0] = self.bos_id  # 设置起始标记
+            outputs[:, 0] = self.bos_id
 
             F_t_list = []
+            current_embed = None  # 用于存储当前的embedding状态
 
             for t in range(1, self.max_len):
-                # 嵌入当前序列并加上位置编码
-                target_embed = self.embedding(outputs[:, :t])  # (B, t, hidden_dim)
-                position_encoding = self.positional_encoding[:, :t, :].to(target_embed.device)  # 动态调整长度
-                target_embed = target_embed + position_encoding
+                # 这里需要获取当前token的embedding
+                if t == 1:
+                    # 对于第一个token (BOS)，使用特定的初始embedding
+                    current_embed = torch.zeros(batch_size, 1, self.hidden_dim).to(fv.device)
+                
+                position_encoding = self.positional_encoding[:, :t, :].to(current_embed.device)
+                target_embed = current_embed + position_encoding
 
-                # 自回归掩码
                 target_mask = torch.triu(torch.ones(t, t), diagonal=1).bool().to(target_embed.device)
 
-                # Transformer 解码器
                 decoder_output = self.transformer_decoder(
-                    tgt=target_embed.permute(1, 0, 2),  # (t, B, hidden_dim)
-                    memory=memory,                     # (N_v, B, C_v)
-                    tgt_mask=target_mask               # 自回归掩码
-                )  # 输出 (t, B, hidden_dim)
+                    tgt=target_embed.permute(1, 0, 2),
+                    memory=memory,
+                    tgt_mask=target_mask
+                )
+                decoder_output = decoder_output.permute(1, 0, 2)
 
-                decoder_output = decoder_output.permute(1, 0, 2)  # 转换回 (B, t, hidden_dim)
-
-                # 预测下一个词
-                output_t = self.fc_out(decoder_output[:, -1, :])  # (B, vocab_size)
-                next_token = output_t.argmax(dim=-1)  # (B)
-
+                output_t = self.fc_out(decoder_output[:, -1, :])
+                next_token = output_t.argmax(dim=-1)
                 outputs[:, t] = next_token
 
-                # 生成 F_t：对每个隐藏状态应用 softmax
-                F_t_t = F.softmax(decoder_output[:, -1, :], dim=-1)  # (B, hidden_dim)
+                # 更新current_embed，这里需要根据你的具体需求来实现
+                # 可能需要一个额外的embedding层或查找表来获取next_token的embedding
+                F_t_t = F.softmax(decoder_output[:, -1, :], dim=-1)
                 F_t_list.append(F_t_t)
-
-                # 如果所有序列都生成了 <eos>，提前停止
+                
                 if (next_token == self.eos_id).all():
                     break
 
             output = outputs  # 返回生成的序列 (B, max_len)
             F_t = torch.stack(F_t_list, dim=1)  # 拼接 F_t，形状 (B, max_len, hidden_dim)
-
-        # 添加检查
-        if torch.isnan(decoder_output).any():
-            print("NaN detected in decoder_output")
-            self.forward(fv, target_sequence)
 
         return output, F_t
     
@@ -262,17 +250,17 @@ class FindingsGenerator(nn.Module):
         super(FindingsGenerator, self).__init__()
         self.text_decoder = text_decoder
 
-    def forward(self, F_v, target_sequence=None):
+    def forward(self, F_v, target_embed=None):
         """
         Args:
             F_v: 输入的视觉特征，形状 (B, N_v, C_v)。
-            target_sequence: 目标序列，形状 (B, max_len)，仅在训练时提供。
+            target_embed: 已经是embedding形式的目标序列，形状 (B, max_len, hidden_dim)，仅在训练时提供。
         Returns:
             output: 生成的词汇分布，形状 (B, max_len, vocab_size)。
             F_t_decoded: 解码器的隐藏状态，形状 (B, max_len, hidden_dim)。
         """
         # 使用 TextDecoder 进行生成
-        output, F_t_decoded = self.text_decoder(F_v, target_sequence=target_sequence)
+        output, F_t_decoded = self.text_decoder(F_v, target_embed=target_embed)
 
         return output, F_t_decoded
     
