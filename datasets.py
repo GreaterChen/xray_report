@@ -158,49 +158,50 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             img = self.transform(img) # (1,C,W,H) 
             vpos = self.dict_positions[pos]
 
-        # ------ Additional Information ------
         info = self.img_captions[idx]
-        source_info = []
 
         # 获取 FINDINGS 和 IMPRESSION
         findings = info.get('FINDINGS:', '')
         impression = info.get('IMPRESSION:', '')
 
-        # 使用 CXR-BERT tokenizer 对 FINDINGS 和 IMPRESSION 进行编码
-        findings = self.get_embeddings(findings, max_len=self.max_len)
-        impression = self.get_embeddings(impression, max_len=self.max_len)
+        # 使用 CXR-BERT 对 FINDINGS 和 IMPRESSION 进行编码
+        embeddings_findings = self.get_embeddings(findings, max_len=self.max_len)
+        embeddings_impression = self.get_embeddings(impression, max_len=self.max_len)
+
+        token_ids_findings = self.get_token_ids(findings, max_len=self.max_len)
+        token_ids_impression = self.get_token_ids(impression, max_len=self.max_len)
 
         source_info = []
         for section, content in info.items():
             if section in self.source_sections:
                 source_info.append(content)
         source_info = ' '.join(source_info)
-        source_info = self.get_embeddings(source_info, max_len=self.max_len)
+        embeddings_source_info = self.get_embeddings(source_info, max_len=self.max_len)
 
         for i in range(len(self.sources)):
             if self.sources[i] == 'image':
                 sources.append((img,vpos))
             elif self.sources[i] == 'findings':
-                sources.append(findings)
+                sources.append(embeddings_findings)
             elif self.sources[i] == 'impression':
-                sources.append(impression)
+                sources.append(embeddings_impression)
             elif self.sources[i] == 'history':
-                sources.append(source_info)
+                sources.append(embeddings_source_info)
 
         for i in range(len(self.targets)):
             if self.targets[i] == 'findings':
-                targets.append(findings)
+                targets.append(token_ids_findings)
             elif self.targets[i] == 'impression':
-                targets.append(impression)
+                targets.append(token_ids_impression)
                 
         return sources if len(sources) > 1 else sources[0], targets if len(targets) > 1 else targets[0], idx
     
-    def get_embeddings(self, text):
+    def get_embeddings(self, text, max_len=None):
         # Tokenize
         encoded = self.tokenizer.encode_plus(
             text,
             add_special_tokens=True,
-            max_length=self.max_len,
+            max_length=max_len if max_len is not None else self.max_len,
             padding='max_length',
             truncation=True,
             return_tensors='pt'  # 返回PyTorch张量
@@ -213,6 +214,29 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             embeddings = outputs.last_hidden_state.squeeze(0)
             
         return embeddings
+    
+    def get_token_ids(self, text, max_len=None):
+        """
+        只获取token ids，不进行embedding转换
+        Returns:
+            token_ids: shape (seq_len,) 包含padding的token id序列
+            attention_mask: shape (seq_len,) 表示哪些位置是真实token，哪些是padding
+        """
+        encoded = self.tokenizer.encode_plus(
+            text,
+            add_special_tokens=True,
+            max_length=max_len if max_len is not None else self.max_len,
+            padding='max_length',
+            truncation=True,
+            return_tensors='pt'
+        )
+        
+        # return {
+        #     'input_ids': encoded['input_ids'].squeeze(0),  # 移除batch维度
+        #     'attention_mask': encoded['attention_mask'].squeeze(0)
+        # }
+
+        return encoded['input_ids'].squeeze(0)
 
     def __get_reports_images(self, file_name='reports.json'):
         caption_file = json.load(open(os.path.join(self.dir, file_name), 'r'))

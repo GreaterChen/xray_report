@@ -126,6 +126,57 @@ class DiseaseFeatureProjector(nn.Module):
         F_v = torch.softmax(F_v, dim=-1)  # 对每个疾病的特征向量进行归一化
         return F_v
     
+class ModalityFusion(nn.Module):
+    def __init__(self, d_model=768, nhead=8, num_encoder_layers=6, dropout=0.1):
+        super().__init__()
+        
+        # Transform layer parameters
+        self.d_model = d_model  # 特征维度
+        self.nhead = nhead      # 注意力头数
+        
+        # Position encoding
+        self.pos_encoder = nn.Parameter(torch.randn(512, d_model))
+        
+        # Transformer encoder
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=4*d_model,
+            dropout=dropout,
+            batch_first=True
+        )
+        self.transformer_encoder = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=num_encoder_layers
+        )
+        
+        # Layer normalization
+        self.norm = nn.LayerNorm(d_model)
+        
+    def forward(self, image_features, text_features):
+        """
+        Args:
+            image_features: shape (batch_size, 256, 768)
+            text_features: shape (batch_size, 256, 768)
+        Returns:
+            fused_features: shape (batch_size, 512, 768)
+        """
+        batch_size = image_features.size(0)
+        
+        # Concatenate features
+        fused_features = torch.cat([image_features, text_features], dim=1)  # (batch_size, 512, 768)
+        
+        # Add positional encoding
+        fused_features = fused_features + self.pos_encoder.unsqueeze(0).expand(batch_size, -1, -1)
+        
+        # Apply transformer encoder
+        fused_features = self.transformer_encoder(fused_features)
+        
+        # Apply layer normalization
+        fused_features = self.norm(fused_features)
+        
+        return fused_features
+    
 class TextDecoder(nn.Module):
     def __init__(self, tokenizer_model_name='microsoft/BiomedVLP-CXR-BERT-specialized', input_dim=512, hidden_dim=768, num_head=8, num_layers=6, max_len=512):
         super(TextDecoder, self).__init__()
@@ -263,6 +314,8 @@ class FindingsGenerator(nn.Module):
         output, F_t_decoded = self.text_decoder(F_v, target_embed=target_embed)
 
         return output, F_t_decoded
+
+
     
 class CoAttentionBlock(nn.Module):
     def __init__(self, embed_dim=512, num_heads=8):
@@ -393,10 +446,11 @@ class ImpressionGenerator(nn.Module):
         return output
     
 class HiMrGn(nn.Module):
-    def __init__(self, image_encoder, features_projector, findings_decoder, co_attention_module, impression_decoder, cxr_bert_feature_extractor):
+    def __init__(self, image_encoder, features_projector, modality_fusion, findings_decoder, co_attention_module, impression_decoder, cxr_bert_feature_extractor):
         super().__init__()
         self.image_encoder = image_encoder
         self.features_projector = features_projector
+        self.modality_fusion = modality_fusion
         self.findings_decoder = findings_decoder
         self.co_attention_module = co_attention_module
         self.impression_decoder = impression_decoder
@@ -408,7 +462,9 @@ class HiMrGn(nn.Module):
 
             F_v = self.features_projector(x)    # (B, Nv, Cv)
 
-            findings, _ = self.findings_decoder(F_v, findings)    # (B, max_len, vocab_size), (B, max_len, hidden_dim)         
+            fusion_features = self.modality_fusion(F_v, history)
+
+            findings, _ = self.findings_decoder(fusion_features, findings)    # (B, max_len, vocab_size), (B, max_len, hidden_dim)         
 
             return {
                 "findings": findings, 
@@ -422,7 +478,9 @@ class HiMrGn(nn.Module):
 
             F_v = self.features_projector(x)    # (B, Nv, Cv)
 
-            findings, F_t = self.findings_decoder(F_v, findings)    # (B, max_len, vocab_size), (B, max_len, hidden_dim)         
+            fusion_features = self.modality_fusion(F_v, history)
+
+            findings, F_t = self.findings_decoder(fusion_features, findings)    # (B, max_len, vocab_size), (B, max_len, hidden_dim)         
 
             F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)   # (B, max_len, hidden_dim), (B, Nv, Cv)      
 

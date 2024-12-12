@@ -161,6 +161,7 @@ if __name__ == "__main__":
     if args.model_name == 'HiMrGn':
         swin_transformer = SwinFeatureExtractor(hidden_dim=768)
         features_projector = DiseaseFeatureProjector(input_dim=768, num_diseases=256, feature_dim=768)
+        modality_fusion = ModalityFusion(d_model=768, nhead=8, num_encoder_layers=6, dropout=0.1)
         findings_decoder = TextDecoder(input_dim=256, hidden_dim=768)
         findings_generator = FindingsGenerator(findings_decoder)
         co_attention_module = CoAttentionModule()
@@ -170,6 +171,7 @@ if __name__ == "__main__":
 
         model = HiMrGn(image_encoder=swin_transformer,
                        features_projector=features_projector,
+                       modality_fusion=modality_fusion,
                        findings_decoder=findings_generator,
                        co_attention_module=co_attention_module,
                        impression_decoder=impression_generator,
@@ -180,6 +182,7 @@ if __name__ == "__main__":
             "Swin Transformer": count_parameters(swin_transformer),
             "Features Projector": count_parameters(features_projector),
             "Findings Generator": count_parameters(findings_generator),
+            "Modality Fusion": count_parameters(modality_fusion),
             "Co-Attention Module": count_parameters(co_attention_module),
             "Impression Generator": count_parameters(impression_generator),
             "CXR BERT Feature Extractor": count_parameters(cxr_bert_feature_extractor),
