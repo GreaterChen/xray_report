@@ -25,6 +25,7 @@ from utils import *
 from datasets import NIHCXR, MIMIC, NLMCXR
 from losses import *
 from models import *
+from metrics import compute_scores
 
 # --- Helper Functions ---
 def find_optimal_cutoff(target, predicted):
@@ -160,11 +161,11 @@ if __name__ == "__main__":
         swin_transformer = SwinFeatureExtractor(hidden_dim=768)
         features_projector = DiseaseFeatureProjector(input_dim=768, num_diseases=256, feature_dim=768)
         modality_fusion = ModalityFusion(d_model=768, nhead=8, num_encoder_layers=6, dropout=0.1)
-        findings_decoder = TextDecoder(input_dim=256, hidden_dim=768)
+        findings_decoder = TextDecoder(input_dim=256, hidden_dim=768, max_len=256)
         findings_generator = FindingsGenerator(findings_decoder)
         co_attention_module = CoAttentionModule(embed_dim=768)
         multi_label_classifier = MultiLabelClassifier(input_dim=768, hidden_dim=384)
-        impression_decoder = TextDecoder(input_dim=256, hidden_dim=768)
+        impression_decoder = TextDecoder(input_dim=256, hidden_dim=768, max_len=256)
         impression_generator = ImpressionGenerator(impression_decoder)
         cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor()
 
@@ -218,6 +219,8 @@ if __name__ == "__main__":
         last_epoch, (best_metric, test_metric) = load(args.checkpoint_path_from, model, optimizer, scheduler)
         print(f'Reloaded from {args.checkpoint_path_from}: Last Epoch {last_epoch}, Best Metric {best_metric}, Test Metric {test_metric}')
 
+    metrics = compute_scores
+    
     # Training phase
     if args.phase == 'TRAIN_STAGE_1':
         criterion = StageOneLoss(pad_id=pad_id).cuda()
@@ -226,8 +229,8 @@ if __name__ == "__main__":
         for epoch in range(last_epoch+1, args.epochs):
             print(f'Epoch: {epoch}')
             train_loss = train(train_loader, model, optimizer, criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, scaler=scaler, train_stage=1)
-            val_loss = test(val_loader, model, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
-            test_loss = test(test_loader, model, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
+            val_loss = test(val_loader, model, mode='val', metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
+            test_loss = test(test_loader, model, mode='test', metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
             
             scheduler.step()
             if best_metric > val_loss:
@@ -243,8 +246,8 @@ if __name__ == "__main__":
         for epoch in range(last_epoch + 1, args.epochs):
             print(f'Epoch: {epoch}')
             train_loss = train(train_loader, model, optimizer, criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, scaler=scaler, train_stage=2)
-            val_loss = test(val_loader, model, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=2)
-            test_loss = test(test_loader, model, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=2)
+            val_loss = test(val_loader, model, metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=2)
+            test_loss = test(test_loader, model, metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=2)
             
             scheduler.step()
             if best_metric > val_loss:

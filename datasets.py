@@ -153,9 +153,9 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
 
         sources = []
         targets = []
+        gts = []
 
         if 'image' in self.sources:
-
             img_file = os.path.join(self.dir, 'images', idx[0][:3] , idx[0], idx[1], idx[2] + '.jpg')
             img = Image.open(img_file).convert('RGB')
             pos = self.img_positions[idx[2]]
@@ -169,6 +169,9 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         # 获取 FINDINGS 和 IMPRESSION
         findings = info.get('FINDINGS:', '')
         impression = info.get('IMPRESSION:', '')
+
+        gts.append(findings)
+        gts.append(impression)
 
         # 使用 CXR-BERT 对 FINDINGS 和 IMPRESSION 进行编码
         token_ids_findings, embeddings_findings = self.get_embeddings(findings, max_len=self.max_len)
@@ -198,8 +201,8 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                 targets.append(token_ids_impression)
             elif self.targets[i] == 'label':
                 targets.append(label)
-                
-        return sources if len(sources) > 1 else sources[0], targets if len(targets) > 1 else targets[0], idx
+
+        return sources if len(sources) > 1 else sources[0], targets if len(targets) > 1 else targets[0], idx, gts
     
     def get_embeddings(self, text, max_len=None):
         # Tokenize
@@ -237,11 +240,6 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             truncation=True,
             return_tensors='pt'
         )
-        
-        # return {
-        #     'input_ids': encoded['input_ids'].squeeze(0),  # 移除batch维度
-        #     'attention_mask': encoded['attention_mask'].squeeze(0)
-        # }
 
         return encoded['input_ids'].squeeze(0)
 

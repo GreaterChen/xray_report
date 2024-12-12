@@ -178,9 +178,14 @@ class ModalityFusion(nn.Module):
         return fused_features
     
 class TextDecoder(nn.Module):
-    def __init__(self, tokenizer_model_name='microsoft/BiomedVLP-CXR-BERT-specialized', input_dim=512, hidden_dim=768, num_head=8, num_layers=6, max_len=512):
+    def __init__(self, tokenizer_model_name='microsoft/BiomedVLP-CXR-BERT-specialized', input_dim=512, hidden_dim=768, num_head=8, num_layers=6, max_len=256):
         super(TextDecoder, self).__init__()
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name, trust_remote_code=True)  # 使用 CXR-BERT 的 tokenizer
+        self.embedding_layer = AutoModel.from_pretrained(
+            tokenizer_model_name, 
+            trust_remote_code=True
+        ).bert.embeddings
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name, trust_remote_code=True)
+
         self.vocab_size = self.tokenizer.vocab_size
         self.transformer_decoder = nn.TransformerDecoder(
             nn.TransformerDecoderLayer(d_model=hidden_dim, nhead=num_head), num_layers=num_layers
@@ -247,49 +252,67 @@ class TextDecoder(nn.Module):
 
             # 生成 F_t：对每个隐藏状态应用 softmax
             F_t = F.softmax(decoder_output, dim=-1)  # (B, seq_len, hidden_dim)
+            return output, F_t, None
 
         else:  # 测试阶段
-            # 在测试阶段，我们需要保持原有的token生成逻辑
-            outputs = torch.zeros(batch_size, self.max_len, dtype=torch.long).fill_(self.pad_id).to(fv.device)
-            outputs[:, 0] = self.bos_id
-
+            outputs_probs = torch.zeros(batch_size, self.max_len, self.vocab_size).to(fv.device)
+            current_tokens = torch.full((batch_size, 1), self.bos_id, dtype=torch.long).to(fv.device)
+            
             F_t_list = []
-            current_embed = None  # 用于存储当前的embedding状态
-
+            decoded_texts = [''] * batch_size
+            
             for t in range(1, self.max_len):
-                # 这里需要获取当前token的embedding
-                if t == 1:
-                    # 对于第一个token (BOS)，使用特定的初始embedding
-                    current_embed = torch.zeros(batch_size, 1, self.hidden_dim).to(fv.device)
+                # 获取当前序列的 embedding
+                encoded = {
+                    'input_ids': current_tokens,
+                    'token_type_ids': torch.zeros_like(current_tokens)
+                }
                 
+                with torch.no_grad():
+                    current_embed = self.embedding_layer(
+                        input_ids=encoded['input_ids'],
+                        token_type_ids=encoded['token_type_ids']
+                    )
+                
+                # 添加位置编码
                 position_encoding = self.positional_encoding[:, :t, :].to(current_embed.device)
                 target_embed = current_embed + position_encoding
-
+                
+                # 创建自回归掩码
                 target_mask = torch.triu(torch.ones(t, t), diagonal=1).bool().to(target_embed.device)
-
+                
+                # Transformer 解码
                 decoder_output = self.transformer_decoder(
                     tgt=target_embed.permute(1, 0, 2),
                     memory=memory,
                     tgt_mask=target_mask
                 )
                 decoder_output = decoder_output.permute(1, 0, 2)
-
-                output_t = self.fc_out(decoder_output[:, -1, :])
+                
+                # 计算当前时间步的词汇分布
+                output_t = self.fc_out(decoder_output[:, -1, :])  # (B, vocab_size)
+                outputs_probs[:, t, :] = F.softmax(output_t, dim=-1)
+                
+                # 选择最可能的 token
                 next_token = output_t.argmax(dim=-1)
-                outputs[:, t] = next_token
-
-                # 更新current_embed，这里需要根据你的具体需求来实现
-                # 可能需要一个额外的embedding层或查找表来获取next_token的embedding
+                
+                # 更新当前序列
+                current_tokens = torch.cat([current_tokens, next_token.unsqueeze(1)], dim=1)
+                # 解码文本
+                for i in range(batch_size):
+                    decoded_texts[i] += self.tokenizer.decode(next_token[i].item(), skip_special_tokens=True)
+                
+                # 计算并存储 F_t
                 F_t_t = F.softmax(decoder_output[:, -1, :], dim=-1)
                 F_t_list.append(F_t_t)
                 
                 if (next_token == self.eos_id).all():
                     break
+            
+            output = outputs_probs
+            F_t = torch.stack(F_t_list, dim=1)  # (B, seq_len, hidden_dim)
 
-            output = outputs  # 返回生成的序列 (B, max_len)
-            F_t = torch.stack(F_t_list, dim=1)  # 拼接 F_t，形状 (B, max_len, hidden_dim)
-
-        return output, F_t
+            return output, F_t, decoded_texts
     
 class FindingsGenerator(nn.Module):
     def __init__(self, text_decoder):
@@ -311,9 +334,9 @@ class FindingsGenerator(nn.Module):
             F_t_decoded: 解码器的隐藏状态，形状 (B, max_len, hidden_dim)。
         """
         # 使用 TextDecoder 进行生成
-        output, F_t_decoded = self.text_decoder(F_v, target_embed=target_embed)
+        output, F_t_decoded, findings_text = self.text_decoder(F_v, target_embed=target_embed)
 
-        return output, F_t_decoded
+        return output, F_t_decoded, findings_text
 
 
     
@@ -504,13 +527,16 @@ class HiMrGn(nn.Module):
 
             fusion_features = self.modality_fusion(F_v, history)
 
-            findings, _ = self.findings_decoder(fusion_features, findings)    # (B, max_len, vocab_size), (B, max_len, hidden_dim)         
+            findings, _, findings_text = self.findings_decoder(fusion_features, findings)    # (B, max_len, vocab_size), (B, max_len, hidden_dim)
 
             return {
                 "findings": findings, 
+                "findings_text": findings_text,
                 "impression": None, 
+                "impression_text": None,
                 "F_F": None, 
-                "F_I": None
+                "F_I": None,
+                "class_logits": None
             }
         
         elif train_stage == 2:
@@ -533,7 +559,9 @@ class HiMrGn(nn.Module):
 
             return {
                 "findings": findings, 
+                "findings_text": findings_text,
                 "impression": impression, 
+                "impression_text": impression_text,
                 "F_F": F_F, 
                 "F_I": F_I,
                 "class_logits": class_logits

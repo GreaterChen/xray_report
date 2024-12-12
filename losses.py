@@ -82,7 +82,7 @@ class SequenceCrossEntropyLoss(nn.Module):
         return loss
     
 class StageOneLoss(nn.Module):
-    def __init__(self, pad_id=0):
+    def __init__(self, pad_id):
         super(StageOneLoss, self).__init__()
         self.cross_entropy_loss = SequenceCrossEntropyLoss(pad_id=pad_id)
 

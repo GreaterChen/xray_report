@@ -85,7 +85,7 @@ def train(data_loader, model, optimizer, criterion, train_stage=2, scheduler=Non
 	running_loss = 0
  
 	prog_bar = tqdm(data_loader)
-	for i, (source, target, idx) in enumerate(prog_bar):
+	for i, (source, target, idx, gts) in enumerate(prog_bar):
 		source = data_to_device(source, device)
 		target = data_to_device(target, device)
 
@@ -136,7 +136,7 @@ def train(data_loader, model, optimizer, criterion, train_stage=2, scheduler=Non
 
 	return running_loss / len(data_loader)
 
-def test(data_loader, model, train_stage=2, criterion=None, device='cpu', return_results=True, kw_src=None, kw_tgt=None, kw_out=None, select_outputs=[]):
+def test(data_loader, model, mode='val', metric_ftns=None, train_stage=2, criterion=None, device='cpu', return_results=True, kw_src=None, kw_tgt=None, kw_out=None, select_outputs=[]):
 	model.eval()
 	running_loss = 0
 
@@ -145,7 +145,17 @@ def test(data_loader, model, train_stage=2, criterion=None, device='cpu', return
 
 	with torch.no_grad():
 		prog_bar = tqdm(data_loader)
-		for i, (source, target, idx) in enumerate(prog_bar):
+		findings_gts_list = []
+		findings_preds_list = []
+		impression_gts_list = []
+		impression_preds_list = []
+		report_gts_list = []
+		report_preds_list = []
+
+		for i, (source, target, idx, gts) in enumerate(prog_bar):
+			findings_gts_list.extend([gt for gt in gts[0]])
+			impression_gts_list.extend([gt for gt in gts[1]])
+
 			source = data_to_device(source, device)
 			target = data_to_device(target, device)
 
@@ -158,27 +168,24 @@ def test(data_loader, model, train_stage=2, criterion=None, device='cpu', return
 			output = data_distributor(model, source)
 			output = args_to_kwargs(output, kw_out)
 
+			findings_preds_list.extend([re for re in output['findings_text']])
+			if train_stage == 2:
+				impression_preds_list.extend([re for re in output['impression_text']])
+
 			if criterion != None:
 				loss, detailed_loss = criterion(output, target)
 				running_loss += loss.item()
 			prog_bar.set_description('Loss: {}'.format(running_loss/(i+1)))
 
-			if return_results:
-				if len(select_outputs) == 0:
-					outputs.append(data_to_device(output,'cpu'))
-					targets.append(data_to_device(target,'cpu'))
-				else:
-					list_output = [output[row] for row in select_outputs]
-					list_target = [target[row] for row in select_outputs]
-					outputs.append(data_to_device(list_output if len(list_output) > 1 else list_output[0],'cpu'))
-					targets.append(data_to_device(list_target if len(list_target) > 1 else list_target[0],'cpu'))
-	
-	if return_results:
-		outputs = data_concatenate(outputs)
-		targets = data_concatenate(targets)
-		return running_loss / len(data_loader), outputs, targets
-	else:
-		return running_loss / len(data_loader)
+
+		findings_met = metric_ftns({i: [gt] for i, gt in enumerate(findings_gts_list)},
+							{i: [re] for i, re in enumerate(findings_preds_list)})
+		
+		for k, v in findings_met.items():
+			print(f'{mode}_{k}: {v}')
+
+	return running_loss / len(data_loader)
+
 
 def save(path, model, optimizer=None, scheduler=None, epoch=-1, stats=None):
 	torch.save({
