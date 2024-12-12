@@ -152,11 +152,14 @@ def test(data_loader, model, train_stage=2, criterion=None, device='cpu', return
 			source = args_to_kwargs(source, kw_src)
 			target = args_to_kwargs(target, kw_tgt)
 
+			source['train_stage'] = train_stage
+			source['idx'] = idx
+
 			output = data_distributor(model, source)
 			output = args_to_kwargs(output, kw_out)
 
 			if criterion != None:
-				loss = criterion(output, target)
+				loss, detailed_loss = criterion(output, target)
 				running_loss += loss.item()
 			prog_bar.set_description('Loss: {}'.format(running_loss/(i+1)))
 

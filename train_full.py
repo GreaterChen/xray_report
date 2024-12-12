@@ -25,8 +25,6 @@ from utils import *
 from datasets import NIHCXR, MIMIC, NLMCXR
 from losses import *
 from models import *
-from baselines.transformer.models import LSTM_Attn, Transformer, GumbelTransformer
-from baselines.rnn.models import ST
 
 # --- Helper Functions ---
 def find_optimal_cutoff(target, predicted):
@@ -92,9 +90,9 @@ def parse_args():
                         help='Keyword arguments for the output settings of the model (default: None).')
 
     # Training settings
-    parser.add_argument('--phase', type=str, default='TRAIN_STAGE_2', choices=['TRAIN_STAGE_1', 'TRAIN_STAGE_2', 'TEST', 'INFER'],
+    parser.add_argument('--phase', type=str, default='TRAIN_STAGE_1', choices=['TRAIN_STAGE_1', 'TRAIN_STAGE_2', 'TEST', 'INFER'],
                         help='Phase of the program: TRAIN, TEST, or INFER.')
-    parser.add_argument('--batch_size', type=int, default=2, help='Batch size for training.')
+    parser.add_argument('--batch_size', type=int, default=4, help='Batch size for training.')
     parser.add_argument('--epochs', type=int, default=100, help='Number of epochs for training.')
     parser.add_argument('--lr', type=float, default=5e-5, help='Learning rate.')
     parser.add_argument('--wd', type=float, default=1e-2, help='Weight decay (L2 regularization).')
@@ -248,7 +246,6 @@ if __name__ == "__main__":
             val_loss = test(val_loader, model, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=2)
             test_loss = test(test_loader, model, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=2)
             
-
             scheduler.step()
             if best_metric > val_loss:
                 best_metric = val_loss
@@ -262,43 +259,6 @@ if __name__ == "__main__":
         for i in range(len(test_data.idx_pidsid)):
             out_file_img.write(test_data.idx_pidsid[i][0] + ' ' + test_data.idx_pidsid[i][1] + '\n')
             
-        # test_loss, test_outputs, test_targets = test(test_loader, model, criterion, device='cuda', kw_src=KW_SRC, kw_tgt=KW_TGT, kw_out=KW_OUT, select_outputs=[1])
-        
-        # test_auc = []
-        # test_f1 = []
-        # test_prc = []
-        # test_rec = []
-        # test_acc = []
-        
-        # threshold = 0.25
-        # NUM_LABELS = 14
-        # for i in range(NUM_LABELS):
-        #     try:
-        #         test_auc.append(metrics.roc_auc_score(test_targets.cpu()[...,i], test_outputs.cpu()[...,i,1]))
-        #         test_f1.append(metrics.f1_score(test_targets.cpu()[...,i], test_outputs.cpu()[...,i,1] > threshold))
-        #         test_prc.append(metrics.precision_score(test_targets.cpu()[...,i], test_outputs.cpu()[...,i,1] > threshold))
-        #         test_rec.append(metrics.recall_score(test_targets.cpu()[...,i], test_outputs.cpu()[...,i,1] > threshold))
-        #         test_acc.append(metrics.accuracy_score(test_targets.cpu()[...,i], test_outputs.cpu()[...,i,1] > threshold))
-                
-        #     except:
-        #         print('An error occurs for label', i)
-                
-        # test_auc = np.mean([x for x in test_auc if str(x) != 'nan'])
-        # test_f1 = np.mean([x for x in test_f1 if str(x) != 'nan'])
-        # test_prc = np.mean([x for x in test_prc if str(x) != 'nan'])
-        # test_rec = np.mean([x for x in test_rec if str(x) != 'nan'])
-        # test_acc = np.mean([x for x in test_acc if str(x) != 'nan'])
-        
-        # print('Accuracy       : {}'.format(test_acc))
-        # print('Macro AUC      : {}'.format(test_auc))
-        # print('Macro F1       : {}'.format(test_f1))
-        # print('Macro Precision: {}'.format(test_prc))
-        # print('Macro Recall   : {}'.format(test_rec))
-        # print('Micro AUC      : {}'.format(metrics.roc_auc_score(test_targets.cpu()[...,:NUM_LABELS] == 1, test_outputs.cpu()[...,:NUM_LABELS,1], average='micro')))
-        # print('Micro F1       : {}'.format(metrics.f1_score(test_targets.cpu()[...,:NUM_LABELS] == 1, test_outputs.cpu()[...,:NUM_LABELS,1] > threshold, average='micro')))
-        # print('Micro Precision: {}'.format(metrics.precision_score(test_targets.cpu()[...,:NUM_LABELS] == 1, test_outputs.cpu()[...,:NUM_LABELS,1] > threshold, average='micro')))
-        # print('Micro Recall   : {}'.format(metrics.recall_score(test_targets.cpu()[...,:NUM_LABELS] == 1, test_outputs.cpu()[...,:NUM_LABELS,1] > threshold, average='micro')))
-        
     elif args.phase == 'INFER':
         # txt_test_outputs, txt_test_targets = infer(test_loader, model, device='cuda', threshold=0.25)
         txt_test_outputs, txt_test_targets = infer(test_loader, model, device='cuda')

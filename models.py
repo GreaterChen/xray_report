@@ -223,7 +223,7 @@ class TextDecoder(nn.Module):
         batch_size = fv.size(0)
         memory = fv.permute(1, 0, 2)  # 转换为 (N_v, B, C_v)
 
-        if target_embed is not None:  # 训练阶段
+        if self.training:  # 训练阶段
             seq_len = target_embed.size(1)
 
             # 嵌入目标序列并加上 Sinusoidal 位置编码

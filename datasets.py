@@ -146,7 +146,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             self.transform = transforms.Compose([transforms.Resize(input_size), transforms.ToTensor()])
 
     def __len__(self):
-        return len(self.idx_pidsid[:100])
+        return len(self.idx_pidsid[:50])
     
     def __getitem__(self, idx):
         idx = self.idx_pidsid[idx] 
