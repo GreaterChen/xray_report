@@ -154,7 +154,6 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         sources = []
         targets = []
 
-        # ------ Multiview Images ------
         if 'image' in self.sources:
 
             img_file = os.path.join(self.dir, 'images', idx[0][:3] , idx[0], idx[1], idx[2] + '.jpg')
@@ -162,6 +161,8 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             pos = self.img_positions[idx[2]]
             img = self.transform(img) # (1,C,W,H) 
             vpos = self.dict_positions[pos]
+
+        label = self.img_labels[idx[:2]]
 
         info = self.img_captions[idx]
 
@@ -195,6 +196,8 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                 targets.append(token_ids_findings)
             elif self.targets[i] == 'impression':
                 targets.append(token_ids_impression)
+            elif self.targets[i] == 'label':
+                targets.append(label)
                 
         return sources if len(sources) > 1 else sources[0], targets if len(targets) > 1 else targets[0], idx
     
@@ -342,8 +345,8 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                 pickle.dump(checkpoint, f)
                 print("Checkpoint saved to file.")
 
-        # self.img_labels, self.list_diseases = self.__get_labels(binary_mode)
-        # self.dict_diseases = dict(zip(self.list_diseases, range(len(self.list_diseases))))
+        self.img_labels, self.list_diseases = self.__get_labels(binary_mode)
+        self.dict_diseases = dict(zip(self.list_diseases, range(len(self.list_diseases))))
         self.idx_pidsid = list(self.img_captions.keys())
         self.top_np = self.__get_nounphrase()
             

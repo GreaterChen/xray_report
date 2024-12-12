@@ -82,19 +82,19 @@ def parse_args():
     # HiMrGn-specific settings
     parser.add_argument('--sources', type=str, nargs='+', default=['image', 'findings', 'impression', 'history'],
                         help='List of source inputs for the model (e.g., image, findings, impression).')
-    parser.add_argument('--targets', type=str, nargs='+', default=['findings', 'impression'],
+    parser.add_argument('--targets', type=str, nargs='+', default=['findings', 'impression', 'label'],
                         help='List of target outputs for the model (e.g., findings, impression).')
     parser.add_argument('--kw_src', type=str, nargs='+', default=['image', 'findings', 'impression', 'history'],
                         help='Keyword arguments for the source inputs of the model (e.g., image, findings, impression).')
-    parser.add_argument('--kw_tgt', type=str, nargs='+', default=['findings', 'impression'],
+    parser.add_argument('--kw_tgt', type=str, nargs='+', default=['findings', 'impression', 'label'],
                         help='Keyword arguments for the target outputs of the model (e.g., findings, impression).')
     parser.add_argument('--kw_out', type=str, default=None,
                         help='Keyword arguments for the output settings of the model (default: None).')
 
     # Training settings
-    parser.add_argument('--phase', type=str, default='TRAIN_STAGE_1', choices=['TRAIN_STAGE_1', 'TRAIN_STAGE_2', 'TEST', 'INFER'],
+    parser.add_argument('--phase', type=str, default='TRAIN_STAGE_2', choices=['TRAIN_STAGE_1', 'TRAIN_STAGE_2', 'TEST', 'INFER'],
                         help='Phase of the program: TRAIN, TEST, or INFER.')
-    parser.add_argument('--batch_size', type=int, default=16, help='Batch size for training.')
+    parser.add_argument('--batch_size', type=int, default=2, help='Batch size for training.')
     parser.add_argument('--epochs', type=int, default=100, help='Number of epochs for training.')
     parser.add_argument('--lr', type=float, default=5e-5, help='Learning rate.')
     parser.add_argument('--wd', type=float, default=1e-2, help='Weight decay (L2 regularization).')
@@ -164,7 +164,7 @@ if __name__ == "__main__":
         modality_fusion = ModalityFusion(d_model=768, nhead=8, num_encoder_layers=6, dropout=0.1)
         findings_decoder = TextDecoder(input_dim=256, hidden_dim=768)
         findings_generator = FindingsGenerator(findings_decoder)
-        co_attention_module = CoAttentionModule()
+        co_attention_module = CoAttentionModule(embed_dim=768)
         multi_label_classifier = MultiLabelClassifier(input_dim=768, hidden_dim=384)
         impression_decoder = TextDecoder(input_dim=256, hidden_dim=768)
         impression_generator = ImpressionGenerator(impression_decoder)
@@ -244,9 +244,10 @@ if __name__ == "__main__":
 
         for epoch in range(last_epoch + 1, args.epochs):
             print(f'Epoch: {epoch}')
-            train_loss = train(train_loader, model, optimizer, criterion, device='cuda', scaler=scaler, train_stage=2)
-            val_loss = test(val_loader, model, criterion, device='cuda', return_results=False, train_stage=2)
-            test_loss = test(test_loader, model, criterion, device='cuda', return_results=False, train_stage=2)
+            train_loss = train(train_loader, model, optimizer, criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, scaler=scaler, train_stage=2)
+            val_loss = test(val_loader, model, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=2)
+            test_loss = test(test_loader, model, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=2)
+            
 
             scheduler.step()
             if best_metric > val_loss:

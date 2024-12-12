@@ -128,7 +128,7 @@ class MultiLabelBCELoss(nn.Module):
         return loss
 
 class CombinedLoss(nn.Module):
-    def __init__(self, pad_id=0, feature_dim=768, projection_dim=128, hidden_dim=256, lambda_contrastive=1.0):
+    def __init__(self, pad_id=0, feature_dim=768, projection_dim=128, hidden_dim=256, lambda_contrastive=1.0, lambda_class=1.0):
         """
         综合损失函数，包括：
         1. Findings 和 Impression 的交叉熵损失。
@@ -140,6 +140,7 @@ class CombinedLoss(nn.Module):
             projection_dim: 投影空间维度，用于对比学习。
             hidden_dim: 预测 MLP 的隐藏层维度。
             lambda_contrastive: 对比损失的权重因子。
+            lambda_class: 多标签分类损失的权重因子。
         """
         super(CombinedLoss, self).__init__()
         self.cross_entropy_loss = SequenceCrossEntropyLoss(pad_id=pad_id)
@@ -148,7 +149,7 @@ class CombinedLoss(nn.Module):
                                                         hidden_dim=hidden_dim)
         self.multi_label_loss = MultiLabelBCELoss()
         self.lambda_contrastive = lambda_contrastive
-
+        self.lambda_class = lambda_class
     def forward(self, output, targets):
         """
         Args:
@@ -160,13 +161,14 @@ class CombinedLoss(nn.Module):
             targets: 目标值，包含：
                 - findings_gt: Findings 的目标序列 (B, seq_len)。
                 - impression_gt: Impression 的目标序列 (B, seq_len)。
+                - label_gt: 14个疾病类别的标签 (B, 14)。
         
         Returns:
             total_loss: 综合损失 (标量)。
             losses: 包含各项损失的字典。
         """
         findings, impression, F_F, F_I, class_logits = output['findings'], output['impression'], output['F_F'], output['F_I'], output['class_logits']  # 解包 output
-        findings_gt, impression_gt, class_logits_gt = targets['findings'], targets['impression'], targets['class_logits']  # 解包 targets
+        findings_gt, impression_gt, class_logits_gt = targets['findings'], targets['impression'], targets['label']  # 解包 targets
 
         # 计算交叉熵损失
         findings_loss = self.cross_entropy_loss(findings, findings_gt)  # Findings 的交叉熵损失
@@ -179,13 +181,14 @@ class CombinedLoss(nn.Module):
         contrastive_loss = self.contrastive_loss(F_F, F_I)
 
         # 综合损失
-        total_loss = findings_loss + impression_loss + self.lambda_contrastive * contrastive_loss
+        total_loss = findings_loss + impression_loss + self.lambda_contrastive * contrastive_loss + self.lambda_class * class_loss
 
         # 返回总损失和各项损失
         losses = {
             "findings_loss": findings_loss,
             "impression_loss": impression_loss,
             "contrastive_loss": contrastive_loss,
+            "class_loss": class_loss,
             "total_loss": total_loss
         }
         return total_loss, losses

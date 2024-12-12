@@ -318,7 +318,7 @@ class FindingsGenerator(nn.Module):
 
     
 class CoAttentionBlock(nn.Module):
-    def __init__(self, embed_dim=512, num_heads=8):
+    def __init__(self, embed_dim=768, num_heads=8):
         """
         单个 Co-Attention Block 的实现，包含以下步骤：
         1. 自注意力 (Self-Attention)
@@ -390,7 +390,7 @@ class CoAttentionBlock(nn.Module):
         return F_t3, F_v3
 
 class CoAttentionModule(nn.Module):
-    def __init__(self, embed_dim=512, num_heads=8, num_blocks=6):
+    def __init__(self, embed_dim=768, num_heads=8, num_blocks=6):
         """
         Co-Attention 模块，由多个 Co-Attention Block 组成。
         Args:
@@ -466,13 +466,13 @@ class ImpressionGenerator(nn.Module):
         super(ImpressionGenerator, self).__init__()
         self.text_decoder = text_decoder
 
-    def forward(self, F_v_prime, F_t_prime, F_t, target_sequence=None):
+    def forward(self, F_v_prime, F_t_prime, F_t, target_embed=None):
         """
         Args:
             F_v_prime: 增强的视觉特征 (B, N_v, C_v)。
             F_t_prime: 增强的文本特征 (B, N_t, C_t)。
             F_t: 原始的文本特征 (B, N_t, C_t)。
-            target_sequence: 目标序列 (B, max_len)，仅在训练时提供。
+            target_embed: 目标序列 (B, max_len, hidden_dim)，仅在训练时提供。
         Returns:
             output: 生成的词汇分布 (B, max_len, vocab_size)。
             F_t_decoded: 解码过程中的隐藏状态 (B, max_len, hidden_dim)。
@@ -481,7 +481,7 @@ class ImpressionGenerator(nn.Module):
         memory = torch.cat([F_v_prime, F_t_prime, F_t], dim=1)  # (B, N_v + 2 * N_t, C)
 
         # 使用 TextDecoder 进行生成
-        output, _ = self.text_decoder(memory, target_sequence=target_sequence)
+        output, _ = self.text_decoder(memory, target_embed=target_embed)
 
         return memory, output
     
@@ -524,7 +524,7 @@ class HiMrGn(nn.Module):
 
             F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)   # (B, max_len, hidden_dim), (B, Nv, Cv)  
 
-            memory, impression = self.impression_decoder(F_v_prime, F_t_prime, F_t, target_sequence=impression) # (B, max_len, vocab_size)
+            memory, impression = self.impression_decoder(F_v_prime, F_t_prime, F_t, target_embed=impression) # (B, max_len, vocab_size)
 
             class_logits = self.multi_label_classifier(memory)
             
