@@ -113,7 +113,12 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         self.source_sections = ['INDICATION:', 'HISTORY:', 'CLINICAL HISTORY:', 'REASON FOR EXAM:', 'REASON FOR EXAMINATION:', 'CLINICAL INFORMATION:', 'CLINICAL INDICATION:', 'PATIENT HISTORY:']
         self.target_sections = ['FINDINGS:', 'IMPRESSION:']
         # 使用与 CXR-BERT 一致的 tokenizer
-        self.embedding_model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
+        # self.embedding_model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
+        self.embedding_model = AutoModel.from_pretrained(
+            model_name, 
+            trust_remote_code=True
+        )
+        self.embedding_layer = self.embedding_model.bert.embeddings
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         
         self.sources = sources # Choose which section as input
@@ -165,18 +170,15 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         impression = info.get('IMPRESSION:', '')
 
         # 使用 CXR-BERT 对 FINDINGS 和 IMPRESSION 进行编码
-        embeddings_findings = self.get_embeddings(findings, max_len=self.max_len)
-        embeddings_impression = self.get_embeddings(impression, max_len=self.max_len)
-
-        token_ids_findings = self.get_token_ids(findings, max_len=self.max_len)
-        token_ids_impression = self.get_token_ids(impression, max_len=self.max_len)
+        token_ids_findings, embeddings_findings = self.get_embeddings(findings, max_len=self.max_len)
+        token_ids_impression, embeddings_impression = self.get_embeddings(impression, max_len=self.max_len)
 
         source_info = []
         for section, content in info.items():
             if section in self.source_sections:
                 source_info.append(content)
         source_info = ' '.join(source_info)
-        embeddings_source_info = self.get_embeddings(source_info, max_len=self.max_len)
+        _, embeddings_source_info = self.get_embeddings(source_info, max_len=self.max_len)
 
         for i in range(len(self.sources)):
             if self.sources[i] == 'image':
@@ -207,13 +209,15 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             return_tensors='pt'  # 返回PyTorch张量
         )
         
-        # 获取embedding
-        with torch.no_grad():  # 不需要梯度
-            outputs = self.embedding_model(**encoded)
-            # outputs.last_hidden_state 形状为 [batch_size, sequence_length, hidden_size]
-            embeddings = outputs.last_hidden_state.squeeze(0)
+        # 直接使用embedding层
+        with torch.no_grad():
+            embeddings = self.embedding_layer(
+                input_ids=encoded['input_ids'],
+                token_type_ids=encoded['token_type_ids']
+            )
+            embeddings = embeddings.squeeze(0)  # 移除batch维度
             
-        return embeddings
+        return encoded['input_ids'], embeddings
     
     def get_token_ids(self, text, max_len=None):
         """

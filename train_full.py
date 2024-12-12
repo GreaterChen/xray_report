@@ -94,7 +94,7 @@ def parse_args():
     # Training settings
     parser.add_argument('--phase', type=str, default='TRAIN_STAGE_1', choices=['TRAIN_STAGE_1', 'TRAIN_STAGE_2', 'TEST', 'INFER'],
                         help='Phase of the program: TRAIN, TEST, or INFER.')
-    parser.add_argument('--batch_size', type=int, default=2, help='Batch size for training.')
+    parser.add_argument('--batch_size', type=int, default=16, help='Batch size for training.')
     parser.add_argument('--epochs', type=int, default=100, help='Number of epochs for training.')
     parser.add_argument('--lr', type=float, default=5e-5, help='Learning rate.')
     parser.add_argument('--wd', type=float, default=1e-2, help='Weight decay (L2 regularization).')
