@@ -97,7 +97,35 @@ class StageOneLoss(nn.Module):
         }
 
         return findings_loss, losses
+    
+class MultiLabelBCELoss(nn.Module):
+    def __init__(self, num_classes=14, pos_weight=None):
+        """
+        计算多标签分类的二元交叉熵损失。
+        Args:
+            num_classes: 类别数量，默认14个疾病类别
+            pos_weight: 正样本权重，用于处理类别不平衡，形状 (num_classes,)
+        """
+        super(MultiLabelBCELoss, self).__init__()
+        self.num_classes = num_classes
+        self.criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='mean')
 
+    def forward(self, predictions, targets):
+        """
+        Args:
+            predictions: 模型输出的类别logits，形状 (B, num_classes)
+            targets: 目标标签，形状 (B, num_classes)，每个位置是0或1
+        Returns:
+            loss: 归一化的二元交叉熵损失 (标量)
+        """
+        # 确保输入形状正确
+        batch_size = predictions.size(0)
+        predictions = predictions.view(batch_size, self.num_classes)  # (B, num_classes)
+        targets = targets.view(batch_size, self.num_classes)  # (B, num_classes)
+        
+        # 计算二元交叉熵损失
+        loss = self.criterion(predictions, targets)
+        return loss
 
 class CombinedLoss(nn.Module):
     def __init__(self, pad_id=0, feature_dim=768, projection_dim=128, hidden_dim=256, lambda_contrastive=1.0):
@@ -105,7 +133,7 @@ class CombinedLoss(nn.Module):
         综合损失函数，包括：
         1. Findings 和 Impression 的交叉熵损失。
         2. Findings 和 Impression 特征的对比学习损失。
-        
+        3. 多标签分类损失。
         Args:
             pad_id: 填充值的索引，用于忽略填充标记的交叉熵损失。
             feature_dim: 输入特征维度 (F_F 和 F_I)。
@@ -118,6 +146,7 @@ class CombinedLoss(nn.Module):
         self.contrastive_loss = ContrastiveLearningLoss(feature_dim=feature_dim, 
                                                         projection_dim=projection_dim, 
                                                         hidden_dim=hidden_dim)
+        self.multi_label_loss = MultiLabelBCELoss()
         self.lambda_contrastive = lambda_contrastive
 
     def forward(self, output, targets):
@@ -136,12 +165,15 @@ class CombinedLoss(nn.Module):
             total_loss: 综合损失 (标量)。
             losses: 包含各项损失的字典。
         """
-        findings, impression, F_F, F_I = output['findings'], output['impression'], output['F_F'], output['F_I']  # 解包 output
-        findings_gt, impression_gt = targets['findings'], targets['impression']  # 解包 targets
+        findings, impression, F_F, F_I, class_logits = output['findings'], output['impression'], output['F_F'], output['F_I'], output['class_logits']  # 解包 output
+        findings_gt, impression_gt, class_logits_gt = targets['findings'], targets['impression'], targets['class_logits']  # 解包 targets
 
         # 计算交叉熵损失
         findings_loss = self.cross_entropy_loss(findings, findings_gt)  # Findings 的交叉熵损失
         impression_loss = self.cross_entropy_loss(impression, impression_gt)  # Impression 的交叉熵损失
+
+        # 计算分类损失
+        class_loss = self.multi_label_loss(class_logits, class_logits_gt)
 
         # 计算对比学习损失
         contrastive_loss = self.contrastive_loss(F_F, F_I)

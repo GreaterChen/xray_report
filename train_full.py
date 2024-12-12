@@ -165,6 +165,7 @@ if __name__ == "__main__":
         findings_decoder = TextDecoder(input_dim=256, hidden_dim=768)
         findings_generator = FindingsGenerator(findings_decoder)
         co_attention_module = CoAttentionModule()
+        multi_label_classifier = MultiLabelClassifier(input_dim=768, hidden_dim=384)
         impression_decoder = TextDecoder(input_dim=256, hidden_dim=768)
         impression_generator = ImpressionGenerator(impression_decoder)
         cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor()
@@ -173,6 +174,7 @@ if __name__ == "__main__":
                        features_projector=features_projector,
                        modality_fusion=modality_fusion,
                        findings_decoder=findings_generator,
+                       multi_label_classifier=multi_label_classifier,
                        co_attention_module=co_attention_module,
                        impression_decoder=impression_generator,
                        cxr_bert_feature_extractor=cxr_bert_feature_extractor)
@@ -184,6 +186,7 @@ if __name__ == "__main__":
             "Findings Generator": count_parameters(findings_generator),
             "Modality Fusion": count_parameters(modality_fusion),
             "Co-Attention Module": count_parameters(co_attention_module),
+            "Multi-Label Classifier": count_parameters(multi_label_classifier),
             "Impression Generator": count_parameters(impression_generator),
             "CXR BERT Feature Extractor": count_parameters(cxr_bert_feature_extractor),
         }
@@ -225,8 +228,8 @@ if __name__ == "__main__":
         for epoch in range(last_epoch+1, args.epochs):
             print(f'Epoch: {epoch}')
             train_loss = train(train_loader, model, optimizer, criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, scaler=scaler, train_stage=1)
-            val_loss = test(val_loader, model, criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
-            test_loss = test(test_loader, model, criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
+            val_loss = test(val_loader, model, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
+            test_loss = test(test_loader, model, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
             
             scheduler.step()
             if best_metric > val_loss:

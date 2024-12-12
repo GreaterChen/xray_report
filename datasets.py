@@ -146,7 +146,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             self.transform = transforms.Compose([transforms.Resize(input_size), transforms.ToTensor()])
 
     def __len__(self):
-        return len(self.idx_pidsid)
+        return len(self.idx_pidsid[:100])
     
     def __getitem__(self, idx):
         idx = self.idx_pidsid[idx] 
@@ -333,7 +333,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             with open(img_info_checkpoint_file, 'rb') as f:
                 checkpoint = pickle.load(f)
                 self.img_captions, self.img_files = checkpoint
-                print("Loaded checkpoint from file.")
+                print(f"Loaded checkpoint from {img_info_checkpoint_file}.")
         else:
             print("Checkpoint file not found. Generating new data.")
             self.img_captions, self.img_files = self.__get_reports_images()
@@ -411,31 +411,31 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                               self.max_len)
         train_dataset.idx_pidsid = [(pid,sid,uuid) for pid,sid,uuid in train_files[train_indices]] if not debug_mode else [(pid,sid,uuid) for pid,sid,uuid in train_files[train_indices]][:10000]
         
-        # val_dataset = MIMIC(self.dir, self.input_size, False, 
-        #                     self.view_pos, self.max_views, self.sources, self.targets, 
-        #                     self.max_len)
-        # val_dataset.idx_pidsid = [(pid,sid,uuid) for pid,sid,uuid in train_files[val_indices]] if not debug_mode else [(pid,sid,uuid) for pid,sid,uuid in train_files[val_indices]][:1000]
+        val_dataset = MIMIC(self.dir, self.input_size, False, 
+                            self.view_pos, self.max_views, self.sources, self.targets, 
+                            self.max_len)
+        val_dataset.idx_pidsid = [(pid,sid,uuid) for pid,sid,uuid in train_files[val_indices]] if not debug_mode else [(pid,sid,uuid) for pid,sid,uuid in train_files[val_indices]][:1000]
 
-        # test_dataset = MIMIC(self.dir, self.input_size, False, 
-        #                     self.view_pos, self.max_views, self.sources, self.targets, 
-        #                     self.max_len)
-        # test_dataset.idx_pidsid = [(pid,sid,uuid) for pid,sid,uuid in test_files] if not debug_mode else [(pid,sid,uuid) for pid,sid,uuid in test_files][:1000]
+        test_dataset = MIMIC(self.dir, self.input_size, False, 
+                            self.view_pos, self.max_views, self.sources, self.targets, 
+                            self.max_len)
+        test_dataset.idx_pidsid = [(pid,sid,uuid) for pid,sid,uuid in test_files] if not debug_mode else [(pid,sid,uuid) for pid,sid,uuid in test_files][:1000]
 
-        # # Use only a subset to make the model run quickly
-        # if train_phase:
-        #     subset_size = 1000
-        # else:
-        #     subset_size = 100#000
+        # Use only a subset to make the model run quickly
+        if train_phase:
+            subset_size = 1000
+        else:
+            subset_size = 100#000
         
-        # val_idx = np.random.choice(len(val_dataset.idx_pidsid), size=min(subset_size, len(val_dataset.idx_pidsid)), replace=False)
-        # test_idx = np.random.choice(len(test_dataset.idx_pidsid), size=min(subset_size, len(test_dataset.idx_pidsid)), replace=False)
+        val_idx = np.random.choice(len(val_dataset.idx_pidsid), size=min(subset_size, len(val_dataset.idx_pidsid)), replace=False)
+        test_idx = np.random.choice(len(test_dataset.idx_pidsid), size=min(subset_size, len(test_dataset.idx_pidsid)), replace=False)
         
-        # train_dataset.idx_pidsid = train_dataset.idx_pidsid[:]
-        # val_dataset.idx_pidsid = [val_dataset.idx_pidsid[i] for i in val_idx]
-        # test_dataset.idx_pidsid = [test_dataset.idx_pidsid[i] for i in test_idx]
+        train_dataset.idx_pidsid = train_dataset.idx_pidsid[:]
+        val_dataset.idx_pidsid = [val_dataset.idx_pidsid[i] for i in val_idx]
+        test_dataset.idx_pidsid = [test_dataset.idx_pidsid[i] for i in test_idx]
         
-        # return train_dataset, val_dataset, test_dataset
-        return train_dataset, None, None
+        return train_dataset, val_dataset, test_dataset
+        # return train_dataset, None, None
 
 class NLMCXR(data.Dataset): # Open-I Dataset
     def __init__(self, directory, input_size=(256,256), random_transform=True,

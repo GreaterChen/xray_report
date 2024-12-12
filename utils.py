@@ -136,7 +136,7 @@ def train(data_loader, model, optimizer, criterion, train_stage=2, scheduler=Non
 
 	return running_loss / len(data_loader)
 
-def test(data_loader, model, criterion=None, device='cpu', return_results=True, kw_src=None, kw_tgt=None, kw_out=None, select_outputs=[]):
+def test(data_loader, model, train_stage=2, criterion=None, device='cpu', return_results=True, kw_src=None, kw_tgt=None, kw_out=None, select_outputs=[]):
 	model.eval()
 	running_loss = 0
 
@@ -145,7 +145,7 @@ def test(data_loader, model, criterion=None, device='cpu', return_results=True, 
 
 	with torch.no_grad():
 		prog_bar = tqdm(data_loader)
-		for i, (source, target) in enumerate(prog_bar):
+		for i, (source, target, idx) in enumerate(prog_bar):
 			source = data_to_device(source, device)
 			target = data_to_device(target, device)
 

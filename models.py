@@ -389,8 +389,6 @@ class CoAttentionBlock(nn.Module):
 
         return F_t3, F_v3
 
-
-
 class CoAttentionModule(nn.Module):
     def __init__(self, embed_dim=512, num_heads=8, num_blocks=6):
         """
@@ -415,6 +413,48 @@ class CoAttentionModule(nn.Module):
         for block in self.blocks:
             F_t, F_v = block(F_t, F_v)
         return F_t, F_v
+
+class MultiLabelClassifier(nn.Module):
+    def __init__(self, input_dim=768, hidden_dim=384):
+        """
+        多标签分类器
+        Args:
+            input_dim: 输入特征维度
+            hidden_dim: 隐藏层维度
+        """
+        super(MultiLabelClassifier, self).__init__()
+        
+        # 全局平均池化，用于将序列特征压缩为单个向量
+        self.global_pool = nn.AdaptiveAvgPool1d(1)
+        
+        # 分类器网络
+        self.classifier = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),  # 添加层归一化提高稳定性
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.LayerNorm(hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_dim // 2, 14),  # 14个类别
+        )
+
+    def forward(self, memory):
+        """
+        Args:
+            memory: 拼接后的特征 (B, seq_len, hidden_dim)
+        Returns:
+            class_logits: 14个类别的预测概率 (B, 14)
+        """
+        # 全局平均池化
+        pooled_features = self.global_pool(memory.transpose(1, 2)).squeeze(-1)  # (B, hidden_dim)
+        
+        # 分类预测
+        class_logits = self.classifier(pooled_features)  # (B, 14)
+        
+        return class_logits
+
 
 class ImpressionGenerator(nn.Module):
     def __init__(self, text_decoder):
@@ -443,10 +483,10 @@ class ImpressionGenerator(nn.Module):
         # 使用 TextDecoder 进行生成
         output, _ = self.text_decoder(memory, target_sequence=target_sequence)
 
-        return output
+        return memory, output
     
 class HiMrGn(nn.Module):
-    def __init__(self, image_encoder, features_projector, modality_fusion, findings_decoder, co_attention_module, impression_decoder, cxr_bert_feature_extractor):
+    def __init__(self, image_encoder, features_projector, modality_fusion, findings_decoder, multi_label_classifier, co_attention_module, impression_decoder, cxr_bert_feature_extractor):
         super().__init__()
         self.image_encoder = image_encoder
         self.features_projector = features_projector
@@ -455,7 +495,7 @@ class HiMrGn(nn.Module):
         self.co_attention_module = co_attention_module
         self.impression_decoder = impression_decoder
         self.cxr_bert_feature_extractor = cxr_bert_feature_extractor
-        
+        self.multi_label_classifier = multi_label_classifier
     def forward(self, image, findings=None, impression=None, history=None, train_stage=2, idx=None):
         if train_stage == 1:
             x = self.image_encoder(image[0])   # (B, C)
@@ -482,10 +522,12 @@ class HiMrGn(nn.Module):
 
             findings, F_t = self.findings_decoder(fusion_features, findings)    # (B, max_len, vocab_size), (B, max_len, hidden_dim)         
 
-            F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)   # (B, max_len, hidden_dim), (B, Nv, Cv)      
+            F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)   # (B, max_len, hidden_dim), (B, Nv, Cv)  
 
-            impression = self.impression_decoder(F_v_prime, F_t_prime, F_t, target_sequence=impression) # (B, max_len, vocab_size)
+            memory, impression = self.impression_decoder(F_v_prime, F_t_prime, F_t, target_sequence=impression) # (B, max_len, vocab_size)
 
+            class_logits = self.multi_label_classifier(memory)
+            
             F_F, findings_text = self.cxr_bert_feature_extractor(findings)     #（B, 768）
             F_I, impression_text = self.cxr_bert_feature_extractor(impression)   # (B, 768)
 
@@ -493,7 +535,8 @@ class HiMrGn(nn.Module):
                 "findings": findings, 
                 "impression": impression, 
                 "F_F": F_F, 
-                "F_I": F_I
+                "F_I": F_I,
+                "class_logits": class_logits
             }
 
 
