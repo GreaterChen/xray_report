@@ -22,7 +22,7 @@ import argparse
 
 # --- Project Packages ---
 from utils import *
-from datasets import NIHCXR, MIMIC, NLMCXR
+from datasets import MIMIC, NLMCXR
 from losses import *
 from models import *
 from baselines.transformer.models import LSTM_Attn, Transformer, GumbelTransformer

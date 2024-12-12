@@ -18,93 +18,8 @@ from transformers import AutoTokenizer, AutoModel
 from tqdm import tqdm
 from collections import defaultdict
 from utils import *
+import h5py
 # --- Datasets ---
-class NIHCXR(data.Dataset): # Chest X-Ray 14 Dataset
-    def __init__(self, directory, input_size=(512,512), random_transform=True):
-        self.list_diseases = ['No Finding', 'Atelectasis', 'Cardiomegaly', 'Effusion', 'Infiltration', 'Mass', 'Nodule', 'Pneumonia', 'Pneumothorax', 'Consolidation', 'Edema', 'Emphysema', 'Fibrosis', 'Pleural_Thickening', 'Hernia']
-        self.dict_diseases = dict(zip(self.list_diseases, range(len(self.list_diseases))))
-
-        self.dir = directory
-        self.input_size = input_size
-        self.random_transform = random_transform
-        self.__input_data()
-        
-        if random_transform:
-            self.transform = transforms.Compose([
-                transforms.RandomHorizontalFlip(),
-                transforms.RandomApply([
-                    transforms.ColorJitter(0.1,0.1,0.1), 
-                    transforms.RandomRotation(15, expand=True)]),
-                transforms.Resize(input_size),
-                transforms.ToTensor(),
-            ])
-        else:
-            self.transform = transforms.Compose([transforms.Resize(input_size), transforms.ToTensor()])
-
-    def __len__(self):
-        return len(self.img_files)
-
-    def __getitem__(self, idx):
-        img = Image.open(self.dir + 'images/' + self.img_files[idx]).convert('RGB')
-        return self.transform(img), self.img_labels[idx]
-
-    def __input_data(self):
-        txt_file = self.dir + 'Data_Entry_2017_v2020.csv'
-        data = np.loadtxt(open(txt_file, "rb"), delimiter=",", skiprows=1, dtype=str)
-        self.img_files = data[..., 0]
-        self.img_labels = self.__one_hot_outer(data[..., 1])
-
-    def __one_hot_inner(self, labels):
-        labels = labels.split('|')
-        indices = []
-
-        for label in labels:
-            if label in self.dict_diseases:
-                indices.append(self.dict_diseases[label])
-            else:
-                # Filtering invalid labels
-                index = np.argmax([label in disease for disease in self.list_diseases])
-                indices.append(index.item())
-
-        labels = np.zeros(len(self.list_diseases))
-        labels[indices] = 1
-        return labels
-
-    def __one_hot_outer(self, labels):
-        one_hot = []
-        for i in range(labels.shape[0]):
-            one_hot.append(self.__one_hot_inner(labels[i]))
-        return np.array(one_hot)
-
-    def get_subsets(self, pvt=0.9, seed=0):
-        file_to_label = dict(zip(self.img_files, self.img_labels))
-
-        train_files = np.loadtxt(self.dir + 'train_val_list.txt', dtype=str)
-        train_labels = np.array([file_to_label[f] for f in train_files])
-
-        test_files = np.loadtxt(self.dir + 'test_list.txt', dtype=str)
-        test_labels = np.array([file_to_label[f] for f in test_files])
-
-        np.random.seed(seed)
-        indices = np.random.permutation(len(train_files))
-        pivot = int(len(train_files) * pvt)
-        train_indices = indices[:pivot]
-        val_indices = indices[pivot:]
-
-        train_dataset = NIHCXR(self.dir, input_size=self.input_size, random_transform=self.random_transform)
-        train_dataset.img_files = train_files[train_indices]
-        train_dataset.img_labels = train_labels[train_indices]
-
-        val_dataset = NIHCXR(self.dir, input_size=self.input_size, random_transform=False)
-        val_dataset.img_files = train_files[val_indices]
-        val_dataset.img_labels = train_labels[val_indices]
-
-        test_dataset = NIHCXR(self.dir, input_size=self.input_size, random_transform=False)
-        test_dataset.img_files = test_files
-        test_dataset.img_labels = test_labels
-
-        return train_dataset, val_dataset, test_dataset
-
 class MIMIC(data.Dataset): # MIMIC-CXR Dataset
     def __init__(self, directory, input_size=(224,224), random_transform=True,
                 view_pos=['AP'], max_views=2, sources=['image','history'], targets=['label'], 
@@ -158,44 +73,126 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             img = self.transform(img) # (1,C,W,H) 
             vpos = self.dict_positions[pos]
 
-        info = self.img_captions[idx]
-
-        # 获取 FINDINGS 和 IMPRESSION
-        findings = info.get('FINDINGS:', '')
-        impression = info.get('IMPRESSION:', '')
-
-        # 使用 CXR-BERT 对 FINDINGS 和 IMPRESSION 进行编码
-        embeddings_findings = self.get_embeddings(findings, max_len=self.max_len)
-        embeddings_impression = self.get_embeddings(impression, max_len=self.max_len)
-
-        token_ids_findings = self.get_token_ids(findings, max_len=self.max_len)
-        token_ids_impression = self.get_token_ids(impression, max_len=self.max_len)
-
-        source_info = []
-        for section, content in info.items():
-            if section in self.source_sections:
-                source_info.append(content)
-        source_info = ' '.join(source_info)
-        embeddings_source_info = self.get_embeddings(source_info, max_len=self.max_len)
-
+        # 直接从预处理数据中读取
+        key = f"{idx[0]}_{idx[1]}_{idx[2]}"
+        preprocessed = self.preprocessed_file[key]
+        
         for i in range(len(self.sources)):
             if self.sources[i] == 'image':
                 sources.append((img,vpos))
             elif self.sources[i] == 'findings':
-                sources.append(embeddings_findings)
+                sources.append(torch.from_numpy(preprocessed['embeddings_findings'][:].astype(np.float32)))
             elif self.sources[i] == 'impression':
-                sources.append(embeddings_impression)
+                sources.append(torch.from_numpy(preprocessed['embeddings_impression'][:].astype(np.float32)))
             elif self.sources[i] == 'history':
-                sources.append(embeddings_source_info)
+                sources.append(torch.from_numpy(preprocessed['embeddings_source_info'][:].astype(np.float32)))
 
         for i in range(len(self.targets)):
             if self.targets[i] == 'findings':
-                targets.append(token_ids_findings)
+                targets.append(torch.from_numpy(preprocessed['token_ids_findings'][:].astype(np.int16)))
             elif self.targets[i] == 'impression':
-                targets.append(token_ids_impression)
+                targets.append(torch.from_numpy(preprocessed['token_ids_impression'][:].astype(np.int16)))
                 
         return sources if len(sources) > 1 else sources[0], targets if len(targets) > 1 else targets[0], idx
     
+    def preprocess_and_save(self, output_path, batch_size=32):
+        """使用GPU批量预处理所有文本并保存embeddings和token_ids"""
+        preprocessed_data = {}
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.embedding_model = self.embedding_model.to(device)
+        
+        # 将数据分批处理
+        idx_batches = [self.idx_pidsid[i:i + batch_size] for i in range(0, len(self.idx_pidsid), batch_size)]
+   
+        
+        print("开始预处理文本数据...")
+        for batch_idx in tqdm(idx_batches):
+            # 收集批次数据
+            findings_batch = []
+            impression_batch = []
+            source_info_batch = []
+            
+            for idx in batch_idx:
+                info = self.img_captions[idx]
+                findings_batch.append(info.get('FINDINGS:', ''))
+                impression_batch.append(info.get('IMPRESSION:', ''))
+                
+                source_info = []
+                for section, content in info.items():
+                    if section in self.source_sections:
+                        source_info.append(content)
+                source_info_batch.append(' '.join(source_info))
+            
+            # 批量编码
+            with torch.cuda.amp.autocast():  # 使用混合精度训练
+                with torch.no_grad():
+                    # 批量处理findings
+                    encoded_findings = self.tokenizer(
+                        findings_batch,
+                        add_special_tokens=True,
+                        max_length=self.max_len,
+                        padding='max_length',
+                        truncation=True,
+                        return_tensors='pt'
+                    ).to(device)
+                    embeddings_findings = self.embedding_model(**encoded_findings).last_hidden_state
+                    token_ids_findings = encoded_findings['input_ids']
+                    
+                    # 批量处理impression
+                    encoded_impression = self.tokenizer(
+                        impression_batch,
+                        add_special_tokens=True,
+                        max_length=self.max_len,
+                        padding='max_length',
+                        truncation=True,
+                        return_tensors='pt'
+                    ).to(device)
+                    embeddings_impression = self.embedding_model(**encoded_impression).last_hidden_state
+                    token_ids_impression = encoded_impression['input_ids']
+                    
+                    # 批量处理source_info
+                    encoded_source_info = self.tokenizer(
+                        source_info_batch,
+                        add_special_tokens=True,
+                        max_length=self.max_len,
+                        padding='max_length',
+                        truncation=True,
+                        return_tensors='pt'
+                    ).to(device)
+                    embeddings_source_info = self.embedding_model(**encoded_source_info).last_hidden_state
+            
+            # 保存每个样本的处理结果
+            for i, idx in enumerate(batch_idx):
+                key = f"{idx[0]}_{idx[1]}_{idx[2]}"
+                preprocessed_data[key] = {
+                    'embeddings_findings': embeddings_findings[i].cpu().half().numpy(),
+                    'embeddings_impression': embeddings_impression[i].cpu().half().numpy(),
+                    'embeddings_source_info': embeddings_source_info[i].cpu().half().numpy(),
+                    'token_ids_findings': token_ids_findings[i].cpu().numpy().astype(np.int16),
+                    'token_ids_impression': token_ids_impression[i].cpu().numpy().astype(np.int16)
+                }
+                
+            # 定期保存以防内存溢出
+            if len(preprocessed_data) % (batch_size * 100) == 0:
+                with h5py.File(output_path, 'w') as f:
+                    for key, value in preprocessed_data.items():
+                        group = f.create_group(key)
+                        for k, v in value.items():
+                            group.create_dataset(k, data=v, compression="gzip", compression_opts=9)
+        
+        # 最终保存
+        with open(output_path, 'wb') as f:
+            with h5py.File(output_path, 'w') as f:
+                    for key, value in preprocessed_data.items():
+                        group = f.create_group(key)
+                        for k, v in value.items():
+                            group.create_dataset(k, data=v, compression="gzip", compression_opts=9)
+        print(f"预处理数据已保存到: {output_path}")
+        
+        # 将模型移回CPU以释放GPU内存
+        self.embedding_model = self.embedding_model.cpu()
+        torch.cuda.empty_cache()
+        
     def get_embeddings(self, text, max_len=None):
         # Tokenize
         encoded = self.tokenizer.encode_plus(
@@ -341,7 +338,17 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         # self.img_labels, self.list_diseases = self.__get_labels(binary_mode)
         # self.dict_diseases = dict(zip(self.list_diseases, range(len(self.list_diseases))))
         self.idx_pidsid = list(self.img_captions.keys())
-        self.top_np = self.__get_nounphrase()
+        # self.top_np = self.__get_nounphrase()
+
+        # 加载预处理数据
+        preprocessed_path = "/home/chenlb/xray_report_generation/checkpoints/preprocessed_text.h5"
+        if os.path.exists(preprocessed_path):
+            print("加载预处理文本数据...")
+            self.preprocessed_file = h5py.File(preprocessed_path, 'r')
+        else:
+            print("未找到预处理数据,开始预处理...")
+            preprocessed_path = self.preprocess_and_save(preprocessed_path, batch_size=32)
+            self.preprocessed_file = h5py.File(preprocessed_path, 'r')
             
     def __generate_splits(self, test_size=0.2, seed=0, file_name='mimic-cxr-2.0.0-chexpert.csv'):
         train_val_file = open(os.path.join(self.dir, 'train_val_list.txt'), 'w')
