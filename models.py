@@ -127,7 +127,7 @@ class DiseaseFeatureProjector(nn.Module):
         return F_v
     
 class ModalityFusion(nn.Module):
-    def __init__(self, d_model=768, nhead=8, num_encoder_layers=6, dropout=0.1):
+    def __init__(self, d_model=768, input_dim=256+197, nhead=8, num_encoder_layers=6, dropout=0.1):
         super().__init__()
         
         # Transform layer parameters
@@ -135,7 +135,7 @@ class ModalityFusion(nn.Module):
         self.nhead = nhead      # 注意力头数
         
         # Position encoding
-        self.pos_encoder = nn.Parameter(torch.randn(512, d_model))
+        self.pos_encoder = nn.Parameter(torch.randn(input_dim, d_model))
         
         # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
@@ -252,10 +252,25 @@ class TextDecoder(nn.Module):
 
             # 生成 F_t：对每个隐藏状态应用 softmax
             F_t = F.softmax(decoder_output, dim=-1)  # (B, seq_len, hidden_dim)
-            return output, F_t, None
+
+            # 生成文本
+            decoded_texts = []
+            pred_tokens = torch.argmax(output, dim=-1)  # (B, seq_len)
+            
+            for tokens in pred_tokens:
+                try:
+                    sep_pos = tokens.tolist().index(self.eos_id)
+                    text = self.tokenizer.decode(tokens[:sep_pos], skip_special_tokens=True)
+                except:
+                    text = self.tokenizer.decode(tokens, skip_special_tokens=True)
+                decoded_texts.append(text)
+
+
+            return output, F_t, decoded_texts
 
         else:  # 测试阶段
             outputs_probs = torch.zeros(batch_size, self.max_len, self.vocab_size).to(fv.device)
+            outputs_probs[:, 0, self.bos_id] = 1.0
             current_tokens = torch.full((batch_size, 1), self.bos_id, dtype=torch.long).to(fv.device)
             
             F_t_list = []
@@ -291,10 +306,12 @@ class TextDecoder(nn.Module):
                 
                 # 计算当前时间步的词汇分布
                 output_t = self.fc_out(decoder_output[:, -1, :])  # (B, vocab_size)
-                outputs_probs[:, t, :] = F.softmax(output_t, dim=-1)
-                
+                probs = F.softmax(output_t / 0.7, dim=-1)
+                outputs_probs[:, t, :] = probs
+
                 # 选择最可能的 token
                 next_token = output_t.argmax(dim=-1)
+                # next_token = torch.multinomial(probs, num_samples=1).squeeze(-1)
                 
                 # 更新当前序列
                 current_tokens = torch.cat([current_tokens, next_token.unsqueeze(1)], dim=1)
@@ -523,7 +540,8 @@ class HiMrGn(nn.Module):
         if train_stage == 1:
             x = self.image_encoder(image[0])   # (B, C)
 
-            F_v = self.features_projector(x)    # (B, Nv, Cv)
+            # F_v = self.features_projector(x)    # (B, Nv, Cv)
+            F_v = x
 
             fusion_features = self.modality_fusion(F_v, history)
 
@@ -542,7 +560,8 @@ class HiMrGn(nn.Module):
         elif train_stage == 2:
             x = self.image_encoder(image[0])   # (B, C)
 
-            F_v = self.features_projector(x)    # (B, Nv, Cv)
+            # F_v = self.features_projector(x)    # (B, Nv, Cv)
+            F_v = x
 
             fusion_features = self.modality_fusion(F_v, history)
 

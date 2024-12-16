@@ -22,10 +22,12 @@ import argparse
 
 # --- Project Packages ---
 from utils import *
-from datasets import NIHCXR, MIMIC, NLMCXR
+from datasets import MIMIC
 from losses import *
 from models import *
 from metrics import compute_scores
+
+logger = setup_logger(log_dir='logs')
 
 # --- Helper Functions ---
 def find_optimal_cutoff(target, predicted):
@@ -93,7 +95,7 @@ def parse_args():
     # Training settings
     parser.add_argument('--phase', type=str, default='TRAIN_STAGE_1', choices=['TRAIN_STAGE_1', 'TRAIN_STAGE_2', 'TEST', 'INFER'],
                         help='Phase of the program: TRAIN, TEST, or INFER.')
-    parser.add_argument('--batch_size', type=int, default=4, help='Batch size for training.')
+    parser.add_argument('--batch_size', type=int, default=8, help='Batch size for training.')
     parser.add_argument('--epochs', type=int, default=100, help='Number of epochs for training.')
     parser.add_argument('--lr', type=float, default=5e-5, help='Learning rate.')
     parser.add_argument('--wd', type=float, default=1e-2, help='Weight decay (L2 regularization).')
@@ -106,7 +108,7 @@ def parse_args():
     # Reload settings
     parser.add_argument('--reload', action='store_true', help='Reload from a checkpoint.')
     parser.add_argument('--checkpoint_path_from', type=str, default=None, help='Path to load the checkpoint from.')
-    parser.add_argument('--checkpoint_path_to', type=str, default="/home/chenlb/xray_report_generation/results/test/stage_1", help='Path to save the checkpoint to.')
+    parser.add_argument('--checkpoint_path_to', type=str, default="/home/chenlb/xray_report_generation/results/stage_1/best_model.pth", help='Path to save the checkpoint to.')
 
     return parser.parse_args()
 
@@ -139,28 +141,15 @@ if __name__ == "__main__":
         pad_id = dataset.tokenizer.pad_token_id
         comment = f'Stage{args.phase}'
 
-    elif args.dataset_name == 'NLMCXR':
-        input_size = (256, 256)
-        max_views = 2
-        num_labels = 114
-        num_classes = 2
-
-        dataset = NLMCXR(args.image_dir, input_size, view_pos=['AP', 'PA', 'LATERAL'], max_views=max_views,
-                         sources=['image', 'findings', 'impression'], targets=['findings', 'impression'])
-        train_data, val_data, test_data = dataset.get_subsets(seed=args.seed)
-
-        vocab_size = len(dataset.vocab)
-        posit_size = dataset.max_len
-        comment = f'MaxView{max_views}_NumLabel{num_labels}_NoHistory'
-
     else:
         raise ValueError('Invalid dataset_name')
 
     # Model-specific settings
     if args.model_name == 'HiMrGn':
         swin_transformer = SwinFeatureExtractor(hidden_dim=768)
+        vit_transformer = ViTFeatureExtractor(model_name='vit_base_patch16_224', pretrained=True)
         features_projector = DiseaseFeatureProjector(input_dim=768, num_diseases=256, feature_dim=768)
-        modality_fusion = ModalityFusion(d_model=768, nhead=8, num_encoder_layers=6, dropout=0.1)
+        modality_fusion = ModalityFusion(d_model=768, input_dim=256+197, nhead=8, num_encoder_layers=6, dropout=0.1)
         findings_decoder = TextDecoder(input_dim=256, hidden_dim=768, max_len=256)
         findings_generator = FindingsGenerator(findings_decoder)
         co_attention_module = CoAttentionModule(embed_dim=768)
@@ -169,7 +158,7 @@ if __name__ == "__main__":
         impression_generator = ImpressionGenerator(impression_decoder)
         cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor()
 
-        model = HiMrGn(image_encoder=swin_transformer,
+        model = HiMrGn(image_encoder=vit_transformer,
                        features_projector=features_projector,
                        modality_fusion=modality_fusion,
                        findings_decoder=findings_generator,
@@ -181,6 +170,7 @@ if __name__ == "__main__":
         # Compute parameters for each module
         module_parameters = {
             "Swin Transformer": count_parameters(swin_transformer),
+            "ViT Transformer": count_parameters(vit_transformer),
             "Features Projector": count_parameters(features_projector),
             "Findings Generator": count_parameters(findings_generator),
             "Modality Fusion": count_parameters(modality_fusion),
@@ -192,21 +182,21 @@ if __name__ == "__main__":
 
         # Print results
         for module_name, param_count in module_parameters.items():
-            print(f"{module_name}: {param_count} parameters")
+            logger.info(f"{module_name}: {param_count} parameters")
 
     else:
         raise ValueError('Invalid model_name')
 
     # Data loaders
-    train_loader = data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=1, drop_last=True)
-    val_loader = data.DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=1)
-    test_loader = data.DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=1)
+    train_loader = data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=8, drop_last=True)
+    val_loader = data.DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=8)
+    test_loader = data.DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=8)
 
     model = nn.DataParallel(model).cuda()
     optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=args.wd)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[25, 40, 55, 70, 85])
 
-    print('Total Parameters:', sum(p.numel() for p in model.parameters()))
+    logger.info(f'Total Parameters: {sum(p.numel() for p in model.parameters())}')
     
     last_epoch = -1
     best_metric = 1e9
@@ -217,7 +207,7 @@ if __name__ == "__main__":
     # Load checkpoint if needed
     if args.reload and args.checkpoint_path_from:
         last_epoch, (best_metric, test_metric) = load(args.checkpoint_path_from, model, optimizer, scheduler)
-        print(f'Reloaded from {args.checkpoint_path_from}: Last Epoch {last_epoch}, Best Metric {best_metric}, Test Metric {test_metric}')
+        logger.info(f'Reloaded from {args.checkpoint_path_from}: Last Epoch {last_epoch}, Best Metric {best_metric}, Test Metric {test_metric}')
 
     metrics = compute_scores
     
@@ -229,15 +219,20 @@ if __name__ == "__main__":
         for epoch in range(last_epoch+1, args.epochs):
             print(f'Epoch: {epoch}')
             train_loss = train(train_loader, model, optimizer, criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, scaler=scaler, train_stage=1)
-            val_loss = test(val_loader, model, mode='val', metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
-            test_loss = test(test_loader, model, mode='test', metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
+            val_loss, val_met = test(val_loader, model, mode='val', metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
+            test_loss, test_met = test(test_loader, model, mode='test', metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
+            
+            for k, v in val_met.items():
+                logger.info(f'val_{k}: {v}')
+            # for k, v in test_met.items():
+            #     logger.info(f'test_{k}: {v}')
             
             scheduler.step()
             if best_metric > val_loss:
                 best_metric = val_loss
                 save(args.checkpoint_path_to, model, optimizer, scheduler, epoch, (val_loss, test_loss))
-                print(f'New Best Metric: {best_metric}')
-                print(f'Saved To: {args.checkpoint_path_to}')
+                logger.info(f'New Best Metric: {best_metric}')
+                logger.info(f'Saved To: {args.checkpoint_path_to}')
 
     elif args.phase == 'TRAIN_STAGE_2':
         criterion = CombinedLoss(pad_id=pad_id).cuda()
@@ -253,8 +248,8 @@ if __name__ == "__main__":
             if best_metric > val_loss:
                 best_metric = val_loss
                 save(args.checkpoint_path_to, model, optimizer, scheduler, epoch, (val_loss, test_loss))
-                print(f'New Best Metric: {best_metric}')
-                print(f'Saved To: {args.checkpoint_path_to}')
+                logger.info(f'New Best Metric: {best_metric}')
+                logger.info(f'Saved To: {args.checkpoint_path_to}')
     
     elif args.phase == 'TEST':
         # Output the file list for inspection

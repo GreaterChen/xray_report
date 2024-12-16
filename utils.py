@@ -2,7 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-
+import logging
+import os
+from datetime import datetime
 from tqdm import tqdm
 
 # ------ Helper Functions ------
@@ -104,10 +106,6 @@ def train(data_loader, model, optimizer, criterion, train_stage=2, scheduler=Non
 			running_loss += loss.item()
 			prog_bar.set_description('Loss: {}'.format(running_loss/(i+1)))
 
-			if torch.isnan(loss) or loss.item() > 1000:
-				print("error!")
-				loss = criterion(output, target)
-
 			# Back-propagate and update weights
 			optimizer.zero_grad()
 			scaler.scale(loss).backward()
@@ -115,14 +113,15 @@ def train(data_loader, model, optimizer, criterion, train_stage=2, scheduler=Non
 			scaler.update()
 			if scheduler != None:
 				scheduler.step()
+			
+			print("gts: ", gts[0][0])
+			print("output: ", output['findings_text'][0])
+			print("**************************")
+			
 		else:
 			output = data_distributor(model, source)
 			output = args_to_kwargs(output, kw_out)
 			loss = criterion(output, target)
-
-			if torch.isnan(loss) or loss.item() > 1000:
-				print("error!")
-				loss = criterion(output, target)
 
 			running_loss += loss.item()
 			prog_bar.set_description('Loss: {}'.format(running_loss/(i+1)))
@@ -171,6 +170,8 @@ def test(data_loader, model, mode='val', metric_ftns=None, train_stage=2, criter
 			findings_preds_list.extend([re for re in output['findings_text']])
 			if train_stage == 2:
 				impression_preds_list.extend([re for re in output['impression_text']])
+			
+			print(findings_preds_list[0])
 
 			if criterion != None:
 				loss, detailed_loss = criterion(output, target)
@@ -181,10 +182,9 @@ def test(data_loader, model, mode='val', metric_ftns=None, train_stage=2, criter
 		findings_met = metric_ftns({i: [gt] for i, gt in enumerate(findings_gts_list)},
 							{i: [re] for i, re in enumerate(findings_preds_list)})
 		
-		for k, v in findings_met.items():
-			print(f'{mode}_{k}: {v}')
 
-	return running_loss / len(data_loader)
+
+	return running_loss / len(data_loader), findings_met
 
 
 def save(path, model, optimizer=None, scheduler=None, epoch=-1, stats=None):
@@ -235,7 +235,6 @@ def visual_parameters(modules, parameters):
 	plt.savefig("/home/chenlb/xray_report_generation/results/parameter_distribution.png")
 
 
-
 # 绘制直方图
 def plot_length_distribution(distribution, title):
 	# 准备数据
@@ -259,3 +258,43 @@ def plot_length_distribution(distribution, title):
 	
 	plt.tight_layout()
 	plt.savefig(f"/home/chenlb/xray_report_generation/results/{title.replace(' ', '_')}.png")
+
+def setup_logger(log_dir='logs'):
+    """
+    设置logger，同时输出到控制台和文件
+    
+    Args:
+        log_dir: 日志文件存储目录
+    Returns:
+        logger: 配置好的logger对象
+    """
+    # 创建日志目录
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    
+    # 生成日志文件名（使用当前时间）
+    current_time = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_file = os.path.join(log_dir, f'train_{current_time}.log')
+    
+    # 创建logger对象
+    logger = logging.getLogger('train_logger')
+    logger.setLevel(logging.INFO)
+    
+    # 创建文件处理器
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logging.INFO)
+    
+    # 创建控制台处理器
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    
+    # 设置日志格式
+    formatter = logging.Formatter('%(asctime)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    
+    # 添加处理器到logger
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    return logger
