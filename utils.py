@@ -80,111 +80,171 @@ def args_to_kwargs(args, kwargs_list=None): # This function helps distribute inp
 			return dict(zip(kwargs_list, args))
 	else: # Nothing to do here
 		return args
+	
+def prepare_batch_data(batch, data_loader, device):
+    """准备批次数据，处理图像和文本
+    
+    Args:
+        batch: 输入的批次数据
+        data_loader: 数据加载器
+        device: 计算设备
+    
+    Returns:
+        source_data: 源数据字典
+        target_data: 目标数据字典
+        embeddings_cache: 文本嵌入缓存
+    """
+    # 处理图像数据
+    if 'image' in batch:
+        batch['image'] = data_to_device(batch['image'], device)
+    
+    # 处理文本数据并缓存embeddings
+    text_fields = ['findings', 'impression', 'history']
+    embeddings_cache = {}
+    for field in text_fields:
+        if field in batch:
+            token_ids, embeddings = data_loader.dataset.get_embeddings(batch[field])
+            embeddings_cache[field] = {
+                'token_ids': token_ids,
+                'embeddings': embeddings
+            }
+    
+    # 组装source和target
+    source = []
+    target = []
+    
+    for src in data_loader.dataset.sources:
+        if src == 'image':
+            source.append(batch['image'])
+        elif src in embeddings_cache:
+            source.append(embeddings_cache[src]['embeddings'])
+            
+    for tgt in data_loader.dataset.targets:
+        if tgt == 'label':
+            target.append(data_to_device(batch['label'], device))
+        elif tgt in embeddings_cache:
+            target.append(embeddings_cache[tgt]['token_ids'])
+            
+    return source, target, embeddings_cache
 
 # ------ Core Functions ------
 def train(data_loader, model, optimizer, criterion, train_stage=2, scheduler=None, device='cpu', kw_src=None, kw_tgt=None, kw_out=None, scaler=None):
-	model.train()
-	running_loss = 0
- 
-	prog_bar = tqdm(data_loader)
-	for i, (source, target, idx, gts) in enumerate(prog_bar):
-		source = data_to_device(source, device)
-		target = data_to_device(target, device)
+    model.train()
+    running_loss = 0
+    
+    prog_bar = tqdm(data_loader)
+    for i, batch in enumerate(prog_bar):
+        # 准备批次数据
+        source, target, _ = prepare_batch_data(batch, data_loader, device)
+        
+        # 转换为kwargs格式
+        source = args_to_kwargs(source, kw_src)
+        target = args_to_kwargs(target, kw_tgt)
+        
+        source['train_stage'] = train_stage
+        source['idx'] = batch['idx']
 
-		source = args_to_kwargs(source, kw_src)
-		target = args_to_kwargs(target, kw_tgt)
+        # 剩余的训练逻辑保持不变
+        if scaler != None:
+            with torch.cuda.amp.autocast():
+                output = data_distributor(model, source)
+                output = args_to_kwargs(output, kw_out)
+                loss, detailed_loss = criterion(output, target)
+                
+            running_loss += loss.item()
+            prog_bar.set_description('Loss: {}'.format(running_loss/(i+1)))
 
-		source['train_stage'] = train_stage
-		source['idx'] = idx
+            optimizer.zero_grad()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            if scheduler != None:
+                scheduler.step()
+            
+        else:
+            output = data_distributor(model, source)
+            output = args_to_kwargs(output, kw_out)
+            loss = criterion(output, target)
 
-		if scaler != None:
-			with torch.cuda.amp.autocast():
-				output = data_distributor(model, source)
-				output = args_to_kwargs(output, kw_out)
-				loss, detailed_loss = criterion(output, target)
-				
-			running_loss += loss.item()
-			prog_bar.set_description('Loss: {}'.format(running_loss/(i+1)))
+            running_loss += loss.item()
+            prog_bar.set_description('Loss: {}'.format(running_loss/(i+1)))
 
-			# Back-propagate and update weights
-			optimizer.zero_grad()
-			scaler.scale(loss).backward()
-			scaler.step(optimizer)
-			scaler.update()
-			if scheduler != None:
-				scheduler.step()
-			
-			print("gts: ", gts[0][0])
-			print("output: ", output['findings_text'][0])
-			print("**************************")
-			
-		else:
-			output = data_distributor(model, source)
-			output = args_to_kwargs(output, kw_out)
-			loss = criterion(output, target)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            if scheduler != None:
+                scheduler.step()
 
-			running_loss += loss.item()
-			prog_bar.set_description('Loss: {}'.format(running_loss/(i+1)))
+    return running_loss / len(data_loader)
 
-			# Back-propagate and update weights
-			optimizer.zero_grad()
-			loss.backward()
-			optimizer.step()
-			if scheduler != None:
-				scheduler.step()
+def test(data_loader, model, logger, mode='val', metric_ftns=None, train_stage=2, criterion=None, device='cpu', return_results=True, kw_src=None, kw_tgt=None, kw_out=None, select_outputs=[]):
+    model.eval()
+    running_loss = 0
 
-	return running_loss / len(data_loader)
+    outputs = []
+    targets = []
 
-def test(data_loader, model, mode='val', metric_ftns=None, train_stage=2, criterion=None, device='cpu', return_results=True, kw_src=None, kw_tgt=None, kw_out=None, select_outputs=[]):
-	model.eval()
-	running_loss = 0
+    findings_gts_list = []
+    findings_preds_list = []
+    impression_gts_list = []
+    impression_preds_list = []
+    report_gts_list = []
+    report_preds_list = []
 
-	outputs = []
-	targets = []
+    with torch.no_grad():
+        prog_bar = tqdm(data_loader)
+        for i, batch in enumerate(prog_bar):
+            # 收集ground truth
+            findings_gts_list.extend([gt for gt in batch['gts'][0]])
+            impression_gts_list.extend([gt for gt in batch['gts'][1]])
 
-	with torch.no_grad():
-		prog_bar = tqdm(data_loader)
-		findings_gts_list = []
-		findings_preds_list = []
-		impression_gts_list = []
-		impression_preds_list = []
-		report_gts_list = []
-		report_preds_list = []
+            # 准备批次数据
+            source, target, _ = prepare_batch_data(batch, data_loader, device)
+            
+            # 转换为kwargs格式
+            source = args_to_kwargs(source, kw_src)
+            target = args_to_kwargs(target, kw_tgt)
+            
+            source['train_stage'] = train_stage
+            source['idx'] = batch['idx']
 
-		for i, (source, target, idx, gts) in enumerate(prog_bar):
-			findings_gts_list.extend([gt for gt in gts[0]])
-			impression_gts_list.extend([gt for gt in gts[1]])
+            # 模型推理
+            output = data_distributor(model, source)
+            output = args_to_kwargs(output, kw_out)
 
-			source = data_to_device(source, device)
-			target = data_to_device(target, device)
+            # 收集预测结果
+            findings_preds_list.extend([re for re in output['findings_text']])
+            if train_stage == 2:
+                impression_preds_list.extend([re for re in output['impression_text']])
+            
+            # 记录日志
+            logger.info(f"findings_preds: {findings_preds_list[0]}")
 
-			source = args_to_kwargs(source, kw_src)
-			target = args_to_kwargs(target, kw_tgt)
+            # 计算损失
+            if criterion is not None:
+                loss, detailed_loss = criterion(output, target)
+                running_loss += loss.item()
+            prog_bar.set_description('Loss: {}'.format(running_loss/(i+1)))
 
-			source['train_stage'] = train_stage
-			source['idx'] = idx
+        # 计算评估指标
+        findings_met = metric_ftns(
+            {i: [gt] for i, gt in enumerate(findings_gts_list)},
+            {i: [re] for i, re in enumerate(findings_preds_list)}
+        )
 
-			output = data_distributor(model, source)
-			output = args_to_kwargs(output, kw_out)
+        # 如果需要返回结果
+        if return_results:
+            results = {
+                'findings_gts': findings_gts_list,
+                'findings_preds': findings_preds_list,
+                'impression_gts': impression_gts_list,
+                'impression_preds': impression_preds_list,
+                'report_gts': report_gts_list,
+                'report_preds': report_preds_list
+            }
+            return running_loss / len(data_loader), findings_met, results
 
-			findings_preds_list.extend([re for re in output['findings_text']])
-			if train_stage == 2:
-				impression_preds_list.extend([re for re in output['impression_text']])
-			
-			print(findings_preds_list[0])
-
-			if criterion != None:
-				loss, detailed_loss = criterion(output, target)
-				running_loss += loss.item()
-			prog_bar.set_description('Loss: {}'.format(running_loss/(i+1)))
-
-
-		findings_met = metric_ftns({i: [gt] for i, gt in enumerate(findings_gts_list)},
-							{i: [re] for i, re in enumerate(findings_preds_list)})
-		
-
-
-	return running_loss / len(data_loader), findings_met
+    return running_loss / len(data_loader), findings_met
 
 
 def save(path, model, optimizer=None, scheduler=None, epoch=-1, stats=None):

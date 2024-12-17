@@ -95,9 +95,10 @@ def parse_args():
     # Training settings
     parser.add_argument('--phase', type=str, default='TRAIN_STAGE_1', choices=['TRAIN_STAGE_1', 'TRAIN_STAGE_2', 'TEST', 'INFER'],
                         help='Phase of the program: TRAIN, TEST, or INFER.')
-    parser.add_argument('--batch_size', type=int, default=8, help='Batch size for training.')
+    parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training.')
+    parser.add_argument('--num_workers', type=int, default=6, help='Number of workers for training.')
     parser.add_argument('--epochs', type=int, default=100, help='Number of epochs for training.')
-    parser.add_argument('--lr', type=float, default=5e-5, help='Learning rate.')
+    parser.add_argument('--lr', type=float, default=1e-6, help='Learning rate.')
     parser.add_argument('--wd', type=float, default=1e-2, help='Weight decay (L2 regularization).')
     parser.add_argument('--dropout', type=float, default=0.1, help='Dropout rate.')
 
@@ -188,9 +189,9 @@ if __name__ == "__main__":
         raise ValueError('Invalid model_name')
 
     # Data loaders
-    train_loader = data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=8, drop_last=True)
-    val_loader = data.DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=8)
-    test_loader = data.DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=8)
+    train_loader = data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, drop_last=True)
+    val_loader = data.DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    test_loader = data.DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
     model = nn.DataParallel(model).cuda()
     optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=args.wd)
@@ -219,8 +220,8 @@ if __name__ == "__main__":
         for epoch in range(last_epoch+1, args.epochs):
             print(f'Epoch: {epoch}')
             train_loss = train(train_loader, model, optimizer, criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, scaler=scaler, train_stage=1)
-            val_loss, val_met = test(val_loader, model, mode='val', metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
-            test_loss, test_met = test(test_loader, model, mode='test', metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
+            val_loss, val_met = test(val_loader, model, logger, mode='val', metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
+            test_loss, test_met = test(test_loader, model, logger, mode='test', metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
             
             for k, v in val_met.items():
                 logger.info(f'val_{k}: {v}')

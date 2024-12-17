@@ -28,10 +28,11 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         self.target_sections = ['FINDINGS:', 'IMPRESSION:']
         # 使用与 CXR-BERT 一致的 tokenizer
         # self.embedding_model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.embedding_model = AutoModel.from_pretrained(
             model_name, 
             trust_remote_code=True
-        )
+        ).to(device)
         self.embedding_layer = self.embedding_model.bert.embeddings
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         
@@ -64,63 +65,41 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
     
     def __getitem__(self, idx):
         idx = self.idx_pidsid[idx] 
-
-        sources = []
-        targets = []
-        gts = []
-
-        if 'image' in self.sources:
-            img_file = os.path.join(self.dir, 'images', idx[0][:3] , idx[0], idx[1], idx[2] + '.jpg')
-            img = Image.open(img_file).convert('RGB')
-            pos = self.img_positions[idx[2]]
-            img = self.transform(img) # (1,C,W,H) 
-            vpos = self.dict_positions[pos]
-
-        label = self.img_labels[idx[:2]]
-
         info = self.img_captions[idx]
-
-        # 获取 FINDINGS 和 IMPRESSION
+        
+        # 准备所有可能需要的数据
         findings = info.get('FINDINGS:', '')
         impression = info.get('IMPRESSION:', '')
-
-        gts.append(findings)
-        gts.append(impression)
-
-        # 使用 CXR-BERT 对 FINDINGS 和 IMPRESSION 进行编码
-        token_ids_findings, embeddings_findings = self.get_embeddings(findings, max_len=self.max_len)
-        token_ids_impression, embeddings_impression = self.get_embeddings(impression, max_len=self.max_len)
-
+        
+        output = {
+            'findings': findings,
+            'impression': impression,
+            'label': self.img_labels[idx[:2]],
+            'idx': idx,
+            'gts': [findings, impression]  # 修正这里，添加正确的gts
+        }
+        
+        # 收集history文本
         source_info = []
         for section, content in info.items():
             if section in self.source_sections:
                 source_info.append(content)
-        source_info = ' '.join(source_info)
-        _, embeddings_source_info = self.get_embeddings(source_info, max_len=self.max_len)
+        output['history'] = ' '.join(source_info)
+        
+        # 处理图像
+        if 'image' in self.sources:
+            img_file = os.path.join(self.dir, 'images', idx[0][:3], idx[0], idx[1], idx[2] + '.jpg')
+            img = Image.open(img_file).convert('RGB')
+            pos = self.img_positions[idx[2]]
+            img = self.transform(img)
+            vpos = self.dict_positions[pos]
+            output['image'] = (img, vpos)
 
-        for i in range(len(self.sources)):
-            if self.sources[i] == 'image':
-                sources.append((img,vpos))
-            elif self.sources[i] == 'findings':
-                sources.append(embeddings_findings)
-            elif self.sources[i] == 'impression':
-                sources.append(embeddings_impression)
-            elif self.sources[i] == 'history':
-                sources.append(embeddings_source_info)
-
-        for i in range(len(self.targets)):
-            if self.targets[i] == 'findings':
-                targets.append(token_ids_findings)
-            elif self.targets[i] == 'impression':
-                targets.append(token_ids_impression)
-            elif self.targets[i] == 'label':
-                targets.append(label)
-
-        return sources if len(sources) > 1 else sources[0], targets if len(targets) > 1 else targets[0], idx, gts
+        return output
     
-    def get_embeddings(self, text, max_len=None):
+    def get_embeddings(self, text, max_len=None, device="cuda"):
         # Tokenize
-        encoded = self.tokenizer.encode_plus(
+        encoded = self.tokenizer(
             text,
             add_special_tokens=True,
             max_length=max_len if max_len is not None else self.max_len,
@@ -128,16 +107,19 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             truncation=True,
             return_tensors='pt'  # 返回PyTorch张量
         )
+
+        input_ids = encoded['input_ids'].to(device)
+        token_type_ids = encoded['token_type_ids'].to(device)
         
         # 直接使用embedding层
         with torch.no_grad():
             embeddings = self.embedding_layer(
-                input_ids=encoded['input_ids'],
-                token_type_ids=encoded['token_type_ids']
+                input_ids=input_ids,
+                token_type_ids=token_type_ids
             )
             embeddings = embeddings.squeeze(0)  # 移除batch维度
             
-        return encoded['input_ids'], embeddings
+        return input_ids, embeddings
     
     def get_token_ids(self, text, max_len=None):
         """
@@ -345,7 +327,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         val_idx = np.random.choice(len(val_dataset.idx_pidsid), size=min(subset_size, len(val_dataset.idx_pidsid)), replace=False)
         test_idx = np.random.choice(len(test_dataset.idx_pidsid), size=min(subset_size, len(test_dataset.idx_pidsid)), replace=False)
         
-        train_dataset.idx_pidsid = train_dataset.idx_pidsid[:10000]
+        train_dataset.idx_pidsid = train_dataset.idx_pidsid[:]
         val_dataset.idx_pidsid = [val_dataset.idx_pidsid[i] for i in val_idx]
         test_dataset.idx_pidsid = [test_dataset.idx_pidsid[i] for i in test_idx]
         

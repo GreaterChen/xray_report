@@ -536,6 +536,7 @@ class HiMrGn(nn.Module):
         self.impression_decoder = impression_decoder
         self.cxr_bert_feature_extractor = cxr_bert_feature_extractor
         self.multi_label_classifier = multi_label_classifier
+
     def forward(self, image, findings=None, impression=None, history=None, train_stage=2, idx=None):
         if train_stage == 1:
             x = self.image_encoder(image[0])   # (B, C)
