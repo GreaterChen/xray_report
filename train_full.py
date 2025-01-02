@@ -95,10 +95,10 @@ def parse_args():
     # Training settings
     parser.add_argument('--phase', type=str, default='TRAIN_STAGE_1', choices=['TRAIN_STAGE_1', 'TRAIN_STAGE_2', 'TEST', 'INFER'],
                         help='Phase of the program: TRAIN, TEST, or INFER.')
-    parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training.')
+    parser.add_argument('--batch_size', type=int, default=16, help='Batch size for training.')
     parser.add_argument('--num_workers', type=int, default=6, help='Number of workers for training.')
     parser.add_argument('--epochs', type=int, default=100, help='Number of epochs for training.')
-    parser.add_argument('--lr', type=float, default=1e-6, help='Learning rate.')
+    parser.add_argument('--lr', type=float, default=1e-5, help='Learning rate.')
     parser.add_argument('--wd', type=float, default=1e-2, help='Weight decay (L2 regularization).')
     parser.add_argument('--dropout', type=float, default=0.1, help='Dropout rate.')
 
@@ -152,10 +152,18 @@ if __name__ == "__main__":
         features_projector = DiseaseFeatureProjector(input_dim=768, num_diseases=256, feature_dim=768)
         modality_fusion = ModalityFusion(d_model=768, input_dim=256+197, nhead=8, num_encoder_layers=6, dropout=0.1)
         findings_decoder = TextDecoder(input_dim=256, hidden_dim=768, max_len=256)
+        # findings_decoder = PretrainedMedicalDecoder(
+        #     model_name='microsoft/biogpt',
+        #     hidden_dim=768,
+        # )
         findings_generator = FindingsGenerator(findings_decoder)
         co_attention_module = CoAttentionModule(embed_dim=768)
         multi_label_classifier = MultiLabelClassifier(input_dim=768, hidden_dim=384)
         impression_decoder = TextDecoder(input_dim=256, hidden_dim=768, max_len=256)
+        # impression_decoder = PretrainedMedicalDecoder(
+        #     model_name='microsoft/biogpt',
+        #     hidden_dim=768,
+        # )
         impression_generator = ImpressionGenerator(impression_decoder)
         cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor()
 
@@ -219,14 +227,12 @@ if __name__ == "__main__":
 
         for epoch in range(last_epoch+1, args.epochs):
             print(f'Epoch: {epoch}')
-            train_loss = train(train_loader, model, optimizer, criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, scaler=scaler, train_stage=1)
+            train_loss = train(train_loader, model, optimizer, criterion, num_epochs=args.epochs, current_epoch=epoch, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, scaler=scaler, train_stage=1)
             val_loss, val_met = test(val_loader, model, logger, mode='val', metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
             test_loss, test_met = test(test_loader, model, logger, mode='test', metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
             
             for k, v in val_met.items():
                 logger.info(f'val_{k}: {v}')
-            # for k, v in test_met.items():
-            #     logger.info(f'test_{k}: {v}')
             
             scheduler.step()
             if best_metric > val_loss:

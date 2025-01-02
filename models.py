@@ -180,17 +180,25 @@ class ModalityFusion(nn.Module):
 class TextDecoder(nn.Module):
     def __init__(self, tokenizer_model_name='microsoft/BiomedVLP-CXR-BERT-specialized', input_dim=512, hidden_dim=768, num_head=8, num_layers=6, max_len=256):
         super(TextDecoder, self).__init__()
-        self.embedding_layer = AutoModel.from_pretrained(
+        bert = AutoModel.from_pretrained(
             tokenizer_model_name, 
             trust_remote_code=True
-        ).bert.embeddings
+        )
+        self.embedding_layer = bert.bert.embeddings
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name, trust_remote_code=True)
+        # 冻结原始embedding
+        self.embedding_layer.word_embeddings.weight.requires_grad = False
+        self.output_weight = nn.Parameter(
+            self.embedding_layer.word_embeddings.weight.clone()
+        )
 
         self.vocab_size = self.tokenizer.vocab_size
         self.transformer_decoder = nn.TransformerDecoder(
             nn.TransformerDecoderLayer(d_model=hidden_dim, nhead=num_head), num_layers=num_layers
         ) 
-        self.fc_out = nn.Linear(hidden_dim, self.vocab_size)  # 输出词汇分布
+        self.fc_out = nn.Linear(hidden_dim, self.vocab_size, bias=False)  # 输出词汇分布
+        self.fc_out.weight = self.output_weight
+
         self.hidden_dim = hidden_dim
         self.max_len = max_len
 
@@ -216,7 +224,7 @@ class TextDecoder(nn.Module):
         
         return pe.unsqueeze(0)  # (1, max_len, d_model)
 
-    def forward(self, fv, target_embed=None):
+    def forward(self, fv, target_embed=None, current_step=None, total_steps=None):
         """
         Args:
             fv: 疾病特征矩阵，形状 (B, N_v, C_v)，作为 memory。
@@ -228,35 +236,71 @@ class TextDecoder(nn.Module):
         batch_size = fv.size(0)
         memory = fv.permute(1, 0, 2)  # 转换为 (N_v, B, C_v)
 
-        if self.training:  # 训练阶段
+        if self.training:
             seq_len = target_embed.size(1)
-
-            # 嵌入目标序列并加上 Sinusoidal 位置编码
-            position_encoding = self.positional_encoding[:, :seq_len, :].to(target_embed.device)  # 动态调整长度    # (1, seq_len, hidden_dim)
-            target_embed = target_embed + position_encoding  # (B, seq_len, hidden_dim)
-
-            # 自回归掩码
-            target_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool().to(target_embed.device)
-
-            # Transformer 解码器
-            decoder_output = self.transformer_decoder(
-                tgt=target_embed.permute(1, 0, 2),  # (seq_len, B, hidden_dim)
-                memory=memory,                     # (N_v, B, C_v)
-                tgt_mask=target_mask               # 自回归掩码
-            )  # 输出 (seq_len, B, hidden_dim)
-
-            decoder_output = decoder_output.permute(1, 0, 2)  # 转换回 (B, seq_len, hidden_dim)
-
-            # 生成词汇分布
-            output = self.fc_out(decoder_output)  # (B, seq_len, vocab_size)
-
-            # 生成 F_t：对每个隐藏状态应用 softmax
-            F_t = F.softmax(decoder_output, dim=-1)  # (B, seq_len, hidden_dim)
-
-            # 生成文本
-            decoded_texts = []
-            pred_tokens = torch.argmax(output, dim=-1)  # (B, seq_len)
+            position_encoding = self.positional_encoding[:, :seq_len, :].to(target_embed.device)
             
+            # 初始化输出序列
+            outputs = []
+            F_t_list = []
+            
+            # 第一个token的embedding加上位置编码
+            current_input = target_embed[:, 0:1, :] + position_encoding[:, 0:1, :]
+            current_sequence = current_input  # 用于存储完整序列
+            
+            # 计算teacher forcing比率
+            min_ratio = 0.2
+            max_ratio = 1.0
+            current_ratio = max(min_ratio, max_ratio - (max_ratio - min_ratio) * current_step / total_steps)
+            
+            # 逐token生成
+            for t in range(1, seq_len):
+                # Transformer解码
+                # 注意：current_sequence已经包含了position encoding
+                target_mask = torch.triu(torch.ones(t, t), diagonal=1).bool().to(target_embed.device)
+                
+                decoder_output = self.transformer_decoder(
+                    tgt=current_sequence.permute(1, 0, 2),
+                    memory=memory,
+                    tgt_mask=target_mask
+                )
+                decoder_output = decoder_output.permute(1, 0, 2)
+                
+                # 生成当前时间步的输出
+                current_output = self.fc_out(decoder_output[:, -1:, :])  # (B, 1, vocab_size)
+                outputs.append(current_output)
+                
+                # 计算F_t
+                F_t_t = F.softmax(decoder_output[:, -1:, :], dim=-1)
+                F_t_list.append(F_t_t)
+                
+                # Scheduled Sampling
+                use_teacher_forcing = (torch.rand(1).item() < current_ratio)
+                
+                if use_teacher_forcing:
+                    # 使用ground truth
+                    next_embed = target_embed[:, t:t+1, :]
+                else:
+                    # 使用模型预测
+                    pred_token = torch.argmax(current_output, dim=-1)  # (B, 1)
+                    next_embed = self.embedding_layer(
+                        input_ids=pred_token,
+                        token_type_ids=torch.zeros_like(pred_token)
+                    )
+                
+                # 为新token添加位置编码
+                next_input = next_embed + position_encoding[:, t:t+1, :]
+                
+                # 更新序列
+                current_sequence = torch.cat([current_sequence, next_input], dim=1)
+            
+            # 合并所有输出
+            output = torch.cat(outputs, dim=1)  # (B, seq_len-1, vocab_size)
+            F_t = torch.cat(F_t_list, dim=1)    # (B, seq_len-1, hidden_dim)
+            
+            # 生成文本用于打印
+            decoded_texts = []
+            pred_tokens = torch.argmax(output, dim=-1)
             for tokens in pred_tokens:
                 try:
                     sep_pos = tokens.tolist().index(self.eos_id)
@@ -264,7 +308,7 @@ class TextDecoder(nn.Module):
                 except:
                     text = self.tokenizer.decode(tokens, skip_special_tokens=True)
                 decoded_texts.append(text)
-
+            print(decoded_texts[0])
 
             return output, F_t, decoded_texts
 
@@ -276,17 +320,16 @@ class TextDecoder(nn.Module):
             F_t_list = []
             decoded_texts = [''] * batch_size
             
+            # 初始化重复惩罚记录器
+            repetition_penalty = 1.2  # 惩罚系数，大于1
+            token_counts = torch.ones(batch_size, self.vocab_size).to(fv.device)  # 平滑处理，避免除0
+            
             for t in range(1, self.max_len):
                 # 获取当前序列的 embedding
-                encoded = {
-                    'input_ids': current_tokens,
-                    'token_type_ids': torch.zeros_like(current_tokens)
-                }
-                
                 with torch.no_grad():
                     current_embed = self.embedding_layer(
-                        input_ids=encoded['input_ids'],
-                        token_type_ids=encoded['token_type_ids']
+                        input_ids=current_tokens,
+                        token_type_ids= torch.zeros_like(current_tokens)
                     )
                 
                 # 添加位置编码
@@ -305,16 +348,53 @@ class TextDecoder(nn.Module):
                 decoder_output = decoder_output.permute(1, 0, 2)
                 
                 # 计算当前时间步的词汇分布
-                output_t = self.fc_out(decoder_output[:, -1, :])  # (B, vocab_size)
-                probs = F.softmax(output_t / 0.7, dim=-1)
+                temperature = 0.7
+                output_t = self.fc_out(decoder_output[:, -1, :]) / temperature
+                
+                # 应用重复惩罚
+                for i in range(batch_size):
+                    # 获取已生成的token
+                    generated_tokens = current_tokens[i]
+                    # 更新token计数
+                    for token in generated_tokens:
+                        token_counts[i, token] += 1
+                    
+                    # 计算惩罚项
+                    penalty = torch.ones_like(output_t[i])
+                    penalty.scatter_(0, generated_tokens, repetition_penalty)
+                    
+                    # 应用惩罚
+                    output_t[i] = torch.where(
+                        output_t[i] > 0,
+                        output_t[i] / penalty,
+                        output_t[i] * penalty
+                    )
+                
+                # 计算概率分布
+                probs = F.softmax(output_t, dim=-1)
                 outputs_probs[:, t, :] = probs
-
-                # 选择最可能的 token
-                next_token = output_t.argmax(dim=-1)
-                # next_token = torch.multinomial(probs, num_samples=1).squeeze(-1)
+                
+                # 动态调整采样范围
+                top_k = max(5, int(self.vocab_size * (1 - t/self.max_len)))  # 随着生成过程推进逐渐减小采样范围
+                top_k_probs, top_k_indices = torch.topk(probs, k=top_k, dim=-1)
+                
+                # 应用重复度过滤
+                filtered_probs = top_k_probs.clone()
+                for i in range(batch_size):
+                    # 计算token的重复率
+                    repeat_rates = token_counts[i, top_k_indices[i]] / t
+                    # 对重复率高的token降低其概率
+                    filtered_probs[i] = top_k_probs[i] * torch.exp(-repeat_rates)
+                    # 重新归一化
+                    filtered_probs[i] = filtered_probs[i] / filtered_probs[i].sum()
+                
+                # 在过滤后的概率分布中采样
+                next_token_idx = torch.multinomial(filtered_probs, num_samples=1).squeeze(-1)
+                next_token = top_k_indices[torch.arange(batch_size), next_token_idx]
                 
                 # 更新当前序列
                 current_tokens = torch.cat([current_tokens, next_token.unsqueeze(1)], dim=1)
+                
                 # 解码文本
                 for i in range(batch_size):
                     decoded_texts[i] += self.tokenizer.decode(next_token[i].item(), skip_special_tokens=True)
@@ -323,6 +403,7 @@ class TextDecoder(nn.Module):
                 F_t_t = F.softmax(decoder_output[:, -1, :], dim=-1)
                 F_t_list.append(F_t_t)
                 
+                # 检查序列是否应该结束
                 if (next_token == self.eos_id).all():
                     break
             
@@ -330,6 +411,168 @@ class TextDecoder(nn.Module):
             F_t = torch.stack(F_t_list, dim=1)  # (B, seq_len, hidden_dim)
 
             return output, F_t, decoded_texts
+        
+
+class PretrainedMedicalDecoder(nn.Module):
+    def __init__(self, model_name='microsoft/biogpt', tokenizer_model_name='microsoft/BiomedVLP-CXR-BERT-specialized', hidden_dim=768, max_len=256):
+        super().__init__()
+        self.max_len = max_len
+        from transformers import AutoModelForCausalLM, AutoTokenizer, AutoModel
+        # 加载 BioGPT 模型
+        self.model = AutoModelForCausalLM.from_pretrained(model_name)
+        
+        # 使用 CXR-BERT tokenizer 和 embedding
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name, trust_remote_code=True)
+        cxr_bert = AutoModel.from_pretrained(tokenizer_model_name, trust_remote_code=True)
+        self.embedding_layer = cxr_bert.bert.embeddings
+        
+        if self.model.config.hidden_size != hidden_dim:
+            self.input_proj = nn.Linear(hidden_dim, self.model.config.hidden_size)
+        else:
+            self.input_proj = nn.Identity()
+            
+        self.decoder = self.model.biogpt.layers
+        self.output_proj = nn.Linear(self.model.config.hidden_size, self.tokenizer.vocab_size)
+
+        # 获取 CXR-BERT 特殊标记
+        self.pad_id = self.tokenizer.pad_token_id
+        self.bos_id = self.tokenizer.cls_token_id  # 使用 CLS 作为 BOS
+        self.eos_id = self.tokenizer.sep_token_id  # 使用 SEP 作为 EOS
+
+    def create_attention_mask(self, batch_size, seq_length, device):
+        """创建正确形状的注意力掩码"""
+        causal_mask = torch.triu(
+            torch.ones(seq_length, seq_length, dtype=torch.bool, device=device),
+            diagonal=1
+        )
+        causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)
+        causal_mask = causal_mask.expand(batch_size, 1, seq_length, seq_length)
+        return causal_mask
+        
+    def forward(self, memory, target_embed=None, attention_mask=None):
+        """
+        Args:
+            memory: 编码器输出的特征 (batch_size, seq_len, hidden_dim)
+            target_embed: 目标序列的嵌入表示 (batch_size, tgt_len, hidden_dim)
+            attention_mask: 注意力掩码
+        Returns:
+            output: 生成的词汇分布 (B, max_len, vocab_size)
+            F_t_decoded: 解码器的隐藏状态 (B, max_len, hidden_dim)
+            decoded_texts: 生成的文本列表
+        """
+        # 投影到模型维度
+        memory = self.input_proj(memory)
+        
+        if self.training and target_embed is not None:
+            # 训练模式
+            hidden_states = self.input_proj(target_embed)
+            
+            batch_size, seq_length = hidden_states.size()[:2]
+            causal_mask = self.create_attention_mask(
+                batch_size, 
+                seq_length, 
+                hidden_states.device
+            )
+            
+            # 通过每个解码器层
+            for layer in self.decoder:
+                layer_outputs = layer(
+                    hidden_states,
+                    attention_mask=causal_mask if attention_mask is None else attention_mask
+                )
+                hidden_states = layer_outputs[0]
+            
+            # 生成输出概率
+            logits = self.output_proj(hidden_states)  # (B, seq_len, vocab_size)
+            
+            # 生成文本
+            decoded_texts = []
+            pred_tokens = torch.argmax(logits, dim=-1)  # (B, seq_len)
+            
+            for tokens in pred_tokens:
+                try:
+                    sep_pos = tokens.tolist().index(self.eos_id)
+                    text = self.tokenizer.decode(tokens[:sep_pos], skip_special_tokens=True)
+                except:
+                    text = self.tokenizer.decode(tokens, skip_special_tokens=True)
+                decoded_texts.append(text)
+            
+            # 生成 F_t：对每个隐藏状态应用 softmax
+            F_t_decoded = F.softmax(hidden_states, dim=-1)  # (B, seq_len, hidden_dim)
+
+            return logits, F_t_decoded, decoded_texts
+            
+        else:
+            # 推理模式
+            batch_size = memory.size(0)
+            device = memory.device
+            
+            outputs_probs = torch.zeros(batch_size, self.max_len, self.tokenizer.vocab_size).to(device)
+            outputs_probs[:, 0, self.bos_id] = 1.0
+            current_tokens = torch.full((batch_size, 1), self.bos_id, dtype=torch.long).to(device)
+            
+            hidden_states_list = []
+            decoded_texts = [''] * batch_size
+            
+            for t in range(1, self.max_len):
+                # 获取当前序列的 embedding
+                encoded = {
+                    'input_ids': current_tokens,
+                    'token_type_ids': torch.zeros_like(current_tokens)
+                }
+                
+                with torch.no_grad():
+                    current_embed = self.embedding_layer(
+                        input_ids=encoded['input_ids'],
+                        token_type_ids=encoded['token_type_ids']
+                    )
+                
+                # 投影到 BioGPT 的维度
+                current_embed = self.input_proj(current_embed)
+                
+                # 创建注意力掩码
+                causal_mask = self.create_attention_mask(
+                    batch_size,
+                    t,
+                    device
+                )
+                
+                # 通过解码器层
+                hidden_states = current_embed
+                for layer in self.decoder:
+                    layer_outputs = layer(
+                        hidden_states,
+                        attention_mask=causal_mask
+                    )
+                    hidden_states = layer_outputs[0]
+                
+                # 存储最后一个时间步的隐藏状态
+                hidden_states_list.append(hidden_states[:, -1:])
+                
+                # 计算当前时间步的词汇分布
+                next_token_logits = self.output_proj(hidden_states[:, -1, :])  # (B, vocab_size)
+                probs = F.softmax(next_token_logits, dim=-1)
+                outputs_probs[:, t, :] = probs
+                
+                # 选择最可能的 token
+                next_token = next_token_logits.argmax(dim=-1)
+                
+                # 更新当前序列
+                current_tokens = torch.cat([current_tokens, next_token.unsqueeze(1)], dim=1)
+                
+                # 解码文本
+                for i in range(batch_size):
+                    decoded_texts[i] += self.tokenizer.decode(next_token[i].item(), skip_special_tokens=True)
+                
+                # 检查是否所有序列都生成了结束标记
+                if (next_token == self.eos_id).all():
+                    break
+            
+            # 合并所有隐藏状态
+            F_t_decoded = torch.cat(hidden_states_list, dim=1)  # (B, seq_len, hidden_dim)
+            F_t_decoded = F.softmax(F_t_decoded, dim=-1)
+            
+            return outputs_probs, F_t_decoded, decoded_texts
     
 class FindingsGenerator(nn.Module):
     def __init__(self, text_decoder):
@@ -341,7 +584,7 @@ class FindingsGenerator(nn.Module):
         super(FindingsGenerator, self).__init__()
         self.text_decoder = text_decoder
 
-    def forward(self, F_v, target_embed=None):
+    def forward(self, F_v, target_embed=None, current_step=None, total_steps=None):
         """
         Args:
             F_v: 输入的视觉特征，形状 (B, N_v, C_v)。
@@ -351,7 +594,7 @@ class FindingsGenerator(nn.Module):
             F_t_decoded: 解码器的隐藏状态，形状 (B, max_len, hidden_dim)。
         """
         # 使用 TextDecoder 进行生成
-        output, F_t_decoded, findings_text = self.text_decoder(F_v, target_embed=target_embed)
+        output, F_t_decoded, findings_text = self.text_decoder(F_v, target_embed=target_embed, current_step=current_step, total_steps=total_steps)
 
         return output, F_t_decoded, findings_text
 
@@ -506,7 +749,7 @@ class ImpressionGenerator(nn.Module):
         super(ImpressionGenerator, self).__init__()
         self.text_decoder = text_decoder
 
-    def forward(self, F_v_prime, F_t_prime, F_t, target_embed=None):
+    def forward(self, F_v_prime, F_t_prime, F_t, target_embed=None, current_step=None, total_steps=None):
         """
         Args:
             F_v_prime: 增强的视觉特征 (B, N_v, C_v)。
@@ -521,7 +764,7 @@ class ImpressionGenerator(nn.Module):
         memory = torch.cat([F_v_prime, F_t_prime, F_t], dim=1)  # (B, N_v + 2 * N_t, C)
 
         # 使用 TextDecoder 进行生成
-        output, _ = self.text_decoder(memory, target_embed=target_embed)
+        output, _ = self.text_decoder(memory, target_embed, current_step, total_steps)
 
         return memory, output
     
@@ -537,7 +780,7 @@ class HiMrGn(nn.Module):
         self.cxr_bert_feature_extractor = cxr_bert_feature_extractor
         self.multi_label_classifier = multi_label_classifier
 
-    def forward(self, image, findings=None, impression=None, history=None, train_stage=2, idx=None):
+    def forward(self, image, findings=None, impression=None, history=None, train_stage=2, idx=None, num_epochs=None, current_step=None, total_steps=None):
         if train_stage == 1:
             x = self.image_encoder(image[0])   # (B, C)
 
@@ -546,7 +789,7 @@ class HiMrGn(nn.Module):
 
             fusion_features = self.modality_fusion(F_v, history)
 
-            findings, _, findings_text = self.findings_decoder(fusion_features, findings)    # (B, max_len, vocab_size), (B, max_len, hidden_dim)
+            findings, _, findings_text = self.findings_decoder(fusion_features, findings, current_step, total_steps)    # (B, max_len, vocab_size), (B, max_len, hidden_dim)
 
             return {
                 "findings": findings, 
@@ -566,11 +809,11 @@ class HiMrGn(nn.Module):
 
             fusion_features = self.modality_fusion(F_v, history)
 
-            findings, F_t = self.findings_decoder(fusion_features, findings)    # (B, max_len, vocab_size), (B, max_len, hidden_dim)         
+            findings, F_t = self.findings_decoder(fusion_features, findings, current_step, total_steps)    # (B, max_len, vocab_size), (B, max_len, hidden_dim)         
 
             F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)   # (B, max_len, hidden_dim), (B, Nv, Cv)  
 
-            memory, impression = self.impression_decoder(F_v_prime, F_t_prime, F_t, target_embed=impression) # (B, max_len, vocab_size)
+            memory, impression = self.impression_decoder(F_v_prime, F_t_prime, F_t, impression, current_step, total_steps) # (B, max_len, vocab_size)
 
             class_logits = self.multi_label_classifier(memory)
             

@@ -128,9 +128,12 @@ def prepare_batch_data(batch, data_loader, device):
     return source, target, embeddings_cache
 
 # ------ Core Functions ------
-def train(data_loader, model, optimizer, criterion, train_stage=2, scheduler=None, device='cpu', kw_src=None, kw_tgt=None, kw_out=None, scaler=None):
+def train(data_loader, model, optimizer, criterion, num_epochs, current_epoch, train_stage=2, scheduler=None, device='cpu', kw_src=None, kw_tgt=None, kw_out=None, scaler=None):
     model.train()
     running_loss = 0
+
+    # 计算当前训练进度
+    total_steps = len(data_loader) * num_epochs  # 总步数
     
     prog_bar = tqdm(data_loader)
     for i, batch in enumerate(prog_bar):
@@ -142,6 +145,11 @@ def train(data_loader, model, optimizer, criterion, train_stage=2, scheduler=Non
         target = args_to_kwargs(target, kw_tgt)
         
         source['train_stage'] = train_stage
+		
+        current_step = len(data_loader) * current_epoch + i
+        source['total_steps'] = total_steps
+        source['current_step'] = current_step
+		
         source['idx'] = batch['idx']
 
         # 剩余的训练逻辑保持不变

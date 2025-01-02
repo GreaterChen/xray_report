@@ -126,7 +126,6 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         只获取token ids，不进行embedding转换
         Returns:
             token_ids: shape (seq_len,) 包含padding的token id序列
-            attention_mask: shape (seq_len,) 表示哪些位置是真实token，哪些是padding
         """
         encoded = self.tokenizer.encode_plus(
             text,
@@ -320,14 +319,14 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
 
         # Use only a subset to make the model run quickly
         if train_phase:
-            subset_size = 100
+            subset_size = 10
         else:
             subset_size = 100#000
         
         val_idx = np.random.choice(len(val_dataset.idx_pidsid), size=min(subset_size, len(val_dataset.idx_pidsid)), replace=False)
         test_idx = np.random.choice(len(test_dataset.idx_pidsid), size=min(subset_size, len(test_dataset.idx_pidsid)), replace=False)
         
-        train_dataset.idx_pidsid = train_dataset.idx_pidsid[:]
+        train_dataset.idx_pidsid = train_dataset.idx_pidsid[:1000]
         val_dataset.idx_pidsid = [val_dataset.idx_pidsid[i] for i in val_idx]
         test_dataset.idx_pidsid = [test_dataset.idx_pidsid[i] for i in test_idx]
         
