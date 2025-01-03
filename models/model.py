@@ -14,9 +14,11 @@ from torch import nn
 import torch.nn.functional as F
 
 from models.transformer import Transformer
+from transformers import SwinModel
 
 class BLIP_Decoder(nn.Module):
-    def __init__(self,                 
+    def __init__(self,
+                 args,
                  tokenizer,
                  hidden_dim=768,
                  prompt='',
@@ -66,6 +68,7 @@ class BLIP_Decoder(nn.Module):
                 attention_mask=attention_mask,
                 encoder_hidden_states=encoder_hidden_states,
                 labels=decoder_targets,
+                output_hidden_states=True,  # 添加这个参数以获取隐藏状态
                 return_dict=True
             )
             
@@ -84,15 +87,21 @@ class BLIP_Decoder(nn.Module):
         
         else:
             # 使用generate方法生成文本
-            captions = self.generate(encoder_hidden_states)
-            return None, None, captions
+            logits, hidden_states, captions = self.generate(encoder_hidden_states)
+            return logits, hidden_states, captions
 
     def generate(self, image_embeds, sample=False, num_beams=3, max_length=100, min_length=10, top_p=0.9, repetition_penalty=1.0):
         batch_size = image_embeds.size(0)
         
         # 创建attention mask
         image_atts = torch.ones(image_embeds.size()[:-1], dtype=torch.long).to(image_embeds.device)
-        model_kwargs = {"encoder_hidden_states": image_embeds, "encoder_attention_mask": image_atts}
+        model_kwargs = {
+            "encoder_hidden_states": image_embeds, 
+            "encoder_attention_mask": image_atts,
+            "output_hidden_states": True,  # 添加这个参数以获取隐藏状态
+            "return_dict_in_generate": True,  # 确保返回字典格式
+            "output_scores": True,  # 获取生成的分数
+        }
         
         # 初始化输入
         input_ids = torch.ones((batch_size, 1), dtype=torch.long).to(image_embeds.device)
@@ -110,15 +119,41 @@ class BLIP_Decoder(nn.Module):
             **model_kwargs
         )
         
+        # 获取生成的序列
+        generated_tokens = outputs.sequences  # (batch_size, seq_len)
+        
+        # 获取logits
+        # 将beam search的scores转换为logits
+        logits = torch.zeros(batch_size, generated_tokens.size(1), len(self.tokenizer)).to(image_embeds.device)
+        if hasattr(outputs, 'scores'):
+            for i, beam_scores in enumerate(outputs.scores):
+                # beam_scores shape: (batch_size * num_beams, vocab_size)
+                # 我们只取第一个beam的分数
+                logits[:, i+1, :] = beam_scores.view(batch_size, num_beams, -1)[:, 0, :]
+        
+        # 由于beam search生成不会返回hidden states，我们需要手动计算
+        # 使用forward pass获取hidden states
+        attention_mask = (generated_tokens != self.tokenizer.pad_token_id).long()
+        decoder_outputs = self.text_decoder(
+            input_ids=generated_tokens,
+            attention_mask=attention_mask,
+            encoder_hidden_states=image_embeds,
+            encoder_attention_mask=image_atts,
+            output_hidden_states=True,
+            return_dict=True
+        )
+        hidden_states = decoder_outputs.hidden_states[-1]  # 获取最后一层的hidden states
+        
         # 解码生成的文本
         captions = []
-        for output in outputs:
-            caption = self.tokenizer.decode(output, skip_special_tokens=True)
+        for tokens in generated_tokens:
+            caption = self.tokenizer.decode(tokens, skip_special_tokens=True)
             captions.append(caption)
+        
+        if len(captions) > 0:
+            print(captions[0])
             
-        return captions
-
-
+        return logits, hidden_states, captions
 
         
 class CXR_BERT_FeatureExtractor(nn.Module):
@@ -163,8 +198,8 @@ class SwinFeatureExtractor(nn.Module):
     def __init__(self, image_encoder_name='swin_large_patch4_window7_224', hidden_dim=768, pretrained=True):
         super().__init__()
         # 加载预训练的 Swin Transformer
-        self.image_encoder = create_model(image_encoder_name, pretrained=pretrained, features_only=True)
-        
+        self.image_encoder = create_model(image_encoder_name, pretrained=False, features_only=True)
+
         # 映射到低维视觉特征 Fv
         self.feature_proj = nn.Sequential(
             nn.Conv2d(self.image_encoder.feature_info[-1]['num_chs'], hidden_dim, kernel_size=1),
@@ -177,26 +212,31 @@ class SwinFeatureExtractor(nn.Module):
         """
         image: 输入的图像，形状为 (B, C, H, W)
         返回:
-        Fv: 视觉特征，形状为 (B, hidden_dim)
+        Fv: 视觉特征，形状为 (B, 196, 768)
         """
         # 提取图像的多层特征
         features = self.image_encoder(image)
+
+        """
+        Swin Transformer 
+        最后一层输出形状 (B, 7, 7, 1536)
+        倒数第二层输出形状 (B, 14, 14, 768)
+
+        """
         
         # 获取最后一层特征并调整维度顺序 (B, C, H, W)
-        features_last = features[-1].permute(0, 3, 1, 2)    # (2,1536,7,7)
-        
-        # 仅使用最后一层特征进行降维和处理
-        fv = self.feature_proj(features_last)  
-        fv = fv.squeeze(-1).squeeze(-1)      # 输出形状 (B, hidden_dim)
+        features_last = features[-2].permute(0, 3, 1, 2)    # (2,768,14,14)
+        b,c,h,w = features_last.size()
+        fv = features_last.view(b, c, h*w).permute(0, 2, 1)
         
         return fv
     
 class ViTFeatureExtractor(nn.Module):
     def __init__(self, model_name='vit_base_patch16_224', pretrained=True):
         super().__init__()
-        # 加载预训练的 ViT base版本 (768维)
+
         self.image_encoder = create_model(model_name, pretrained=pretrained)
-        
+
     def forward(self, image):
         """
         image: 输入的图像，形状为 (B, C, H, W)
@@ -270,15 +310,15 @@ class ModalityFusion(nn.Module):
     def forward(self, image_features, text_features):
         """
         Args:
-            image_features: shape (batch_size, 256, 768)
+            image_features: shape (batch_size, 196, 768)
             text_features: shape (batch_size, 256, 768)
         Returns:
-            fused_features: shape (batch_size, 512, 768)
+            fused_features: shape (batch_size, 452, 768)
         """
         batch_size = image_features.size(0)
         
         # Concatenate features
-        fused_features = torch.cat([image_features, text_features], dim=1)  # (batch_size, 512, 768)
+        fused_features = torch.cat([image_features, text_features], dim=1)  # (batch_size, 452, 768)
         
         # Add positional encoding
         fused_features = fused_features + self.pos_encoder.unsqueeze(0).expand(batch_size, -1, -1)
@@ -734,15 +774,17 @@ class HiMrGn(nn.Module):
         self.cxr_bert_feature_extractor = cxr_bert_feature_extractor
         self.multi_label_classifier = multi_label_classifier
 
-    def forward(self, image, findings=None, impression=None, history=None, train_stage=2):
+    def forward(self, image, findings=None, impression=None, history=None, train_stage=2, idx=None, mode='train'):
         if train_stage == 1:
-            x = self.image_encoder(image[0])   # (B, C)
-            F_v = x
+            F_v = self.image_encoder(image[0])   # (B, 196, 768)
 
-            fusion_features = self.modality_fusion(F_v, history)
+            # fusion_features = self.modality_fusion(F_v, history)
+            fusion_features = F_v
 
-            findings, _, findings_text = self.findings_decoder(fusion_features, findings)    
-
+            if mode == 'train':
+                findings, _, findings_text = self.findings_decoder(fusion_features, findings)
+            else:
+                findings, _, findings_text = self.findings_decoder(fusion_features, None)
             return {
                 "findings": findings, 
                 "findings_text": findings_text,

@@ -111,6 +111,7 @@ def prepare_batch_data(batch, data_loader, device):
                 truncation=True,
                 return_tensors="pt"
             ).input_ids  # [batch_size, max_len]
+            encoded[:, 0] = data_loader.dataset.tokenizer.bos_token_id
             # 将tokenized tensor移到device上
             batch[field] = data_to_device(encoded, device)
     
@@ -155,11 +156,8 @@ def train(data_loader, model, optimizer, criterion, num_epochs, current_epoch, t
         
         source['train_stage'] = train_stage
 		
-        current_step = len(data_loader) * current_epoch + i
-        source['total_steps'] = total_steps
-        source['current_step'] = current_step
-		
         source['idx'] = batch['idx']
+        source['mode'] = 'train'
 
         # 剩余的训练逻辑保持不变
         if scaler != None:
@@ -224,7 +222,7 @@ def test(data_loader, model, logger, mode='val', metric_ftns=None, train_stage=2
             
             source['train_stage'] = train_stage
             source['idx'] = batch['idx']
-
+            source['mode'] = mode
             # 模型推理
             output = data_distributor(model, source)
             output = args_to_kwargs(output, kw_out)
@@ -239,7 +237,8 @@ def test(data_loader, model, logger, mode='val', metric_ftns=None, train_stage=2
 
             # 计算损失
             if criterion is not None:
-                loss, detailed_loss = criterion(output, target)
+                # loss, detailed_loss = criterion(output, target)
+                loss = torch.tensor(0.0)
                 running_loss += loss.item()
             prog_bar.set_description('Loss: {}'.format(running_loss/(i+1)))
 

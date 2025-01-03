@@ -66,6 +66,8 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # Data input settings
+    parser.add_argument('--debug', default=True, help='Debug mode.')
+
     parser.add_argument('--dir', type=str, default='/mnt/chenlb/datasets/mimic_cxr/',
                         help='Path to the directory.')
     parser.add_argument('--image_dir', type=str, default='/mnt/chenlb/datasets/mimic_cxr/images/',
@@ -129,7 +131,7 @@ if __name__ == "__main__":
         num_classes = 2
         view_pos = ['AP']
 
-        tokenizer = BertTokenizer.from_pretrained('microsoft/BiomedVLP-CXR-BERT-specialized')
+        tokenizer = BertTokenizer.from_pretrained('microsoft/BiomedVLP-CXR-BERT-specialized', local_files_only=True)
         tokenizer.add_special_tokens({'bos_token': '[DEC]'})
 
         # 设置训练阶段和调试模式
@@ -142,7 +144,7 @@ if __name__ == "__main__":
                           view_pos=view_pos, max_views=max_views,
                           sources=args.sources, targets=args.targets,
                           train_stage=train_stage, tokenizer=tokenizer,
-                          mode='train', subset_size=1000 if debug_mode else None)
+                          mode='train', subset_size=3000 if debug_mode else None)
         
         val_data = MIMIC(args.dir, input_size, random_transform=False,
                         view_pos=view_pos, max_views=max_views,
@@ -157,7 +159,7 @@ if __name__ == "__main__":
                          mode='test', subset_size=10 if args.phase.startswith('TRAIN') else 100)
 
         # 使用第一个数据集的tokenizer属性
-        vocab_size = train_data.tokenizer.vocab_size
+        vocab_size = train_data.tokenizer.vocab_size + 1
         posit_size = train_data.max_len
         pad_id = train_data.tokenizer.pad_token_id
         comment = f'Stage{args.phase}'
@@ -169,8 +171,8 @@ if __name__ == "__main__":
     if args.model_name == 'HiMrGn':
 
         swin_transformer = SwinFeatureExtractor(hidden_dim=768)
-        vit_transformer = ViTFeatureExtractor(model_name='vit_base_patch16_224', pretrained=True)
-        features_projector = DiseaseFeatureProjector(input_dim=768, num_diseases=256, feature_dim=768)
+        # vit_transformer = ViTFeatureExtractor(model_name='vit_base_patch16_224', pretrained=True)
+        # features_projector = DiseaseFeatureProjector(input_dim=768, num_diseases=256, feature_dim=768)
         modality_fusion = ModalityFusion(d_model=768, input_dim=256+197, nhead=8, num_encoder_layers=6, dropout=0.1)
 
         # 将TextDecoder替换为BLIP_Decoder
@@ -184,10 +186,10 @@ if __name__ == "__main__":
         impression_decoder = BLIP_Decoder(args, tokenizer=tokenizer)
         impression_generator = ImpressionGenerator(impression_decoder)
 
-        cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor(tokenizer=tokenizer, max_len=256)
+        cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor(tokenizer=tokenizer)
 
-        model = HiMrGn(image_encoder=vit_transformer,
-                       features_projector=features_projector,
+        model = HiMrGn(image_encoder=swin_transformer,
+                       features_projector=None,
                        modality_fusion=modality_fusion,
                        findings_decoder=findings_generator,
                        multi_label_classifier=multi_label_classifier,
@@ -198,8 +200,8 @@ if __name__ == "__main__":
         # Compute parameters for each module
         module_parameters = {
             "Swin Transformer": count_parameters(swin_transformer),
-            "ViT Transformer": count_parameters(vit_transformer),
-            "Features Projector": count_parameters(features_projector),
+            # "ViT Transformer": count_parameters(vit_transformer),
+            # "Features Projector": count_parameters(features_projector),
             "Findings Generator": count_parameters(findings_generator),
             "Modality Fusion": count_parameters(modality_fusion),
             "Co-Attention Module": count_parameters(co_attention_module),

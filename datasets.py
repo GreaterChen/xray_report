@@ -46,7 +46,8 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             cls._shared_data['embedding_model'] = AutoModel.from_pretrained(
                 'microsoft/BiomedVLP-CXR-BERT-specialized',
-                trust_remote_code=True
+                trust_remote_code=True,
+                local_files_only=True
             ).to(device)
         
         # 加载位置信息
