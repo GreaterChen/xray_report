@@ -24,7 +24,7 @@ import argparse
 from utils import *
 from datasets import MIMIC
 from losses import *
-from models import *
+from models.model import *
 from metrics import compute_scores
 
 logger = setup_logger(log_dir='logs')
@@ -129,17 +129,37 @@ if __name__ == "__main__":
         num_classes = 2
         view_pos = ['AP']
 
-        if args.phase == "TRAIN_STAGE_1":
-            dataset = MIMIC(args.dir, input_size, view_pos=view_pos, max_views=max_views,
-                            sources=args.sources, targets=args.targets, train_stage=1)
-        else:
-            dataset = MIMIC(args.dir, input_size, view_pos=view_pos, max_views=max_views,
-                            sources=args.sources, targets=args.targets, train_stage=2)
-        train_data, val_data, test_data = dataset.get_subsets(seed=args.seed)
+        tokenizer = BertTokenizer.from_pretrained('microsoft/BiomedVLP-CXR-BERT-specialized')
+        tokenizer.add_special_tokens({'bos_token': '[DEC]'})
 
-        vocab_size = dataset.tokenizer.vocab_size
-        posit_size = dataset.max_len
-        pad_id = dataset.tokenizer.pad_token_id
+        # 设置训练阶段和调试模式
+        train_stage = 1 if args.phase == "TRAIN_STAGE_1" else 2
+        debug_mode = args.debug if hasattr(args, 'debug') else False
+
+        MIMIC.load_shared_data(args.dir)
+        # 创建训练、验证和测试数据集
+        train_data = MIMIC(args.dir, input_size, random_transform=True,
+                          view_pos=view_pos, max_views=max_views,
+                          sources=args.sources, targets=args.targets,
+                          train_stage=train_stage, tokenizer=tokenizer,
+                          mode='train', subset_size=1000 if debug_mode else None)
+        
+        val_data = MIMIC(args.dir, input_size, random_transform=False,
+                        view_pos=view_pos, max_views=max_views,
+                        sources=args.sources, targets=args.targets,
+                        train_stage=train_stage, tokenizer=tokenizer,
+                        mode='val', subset_size=10 if args.phase.startswith('TRAIN') else 100)
+        
+        test_data = MIMIC(args.dir, input_size, random_transform=False,
+                         view_pos=view_pos, max_views=max_views,
+                         sources=args.sources, targets=args.targets,
+                         train_stage=train_stage, tokenizer=tokenizer,
+                         mode='test', subset_size=10 if args.phase.startswith('TRAIN') else 100)
+
+        # 使用第一个数据集的tokenizer属性
+        vocab_size = train_data.tokenizer.vocab_size
+        posit_size = train_data.max_len
+        pad_id = train_data.tokenizer.pad_token_id
         comment = f'Stage{args.phase}'
 
     else:
@@ -147,25 +167,24 @@ if __name__ == "__main__":
 
     # Model-specific settings
     if args.model_name == 'HiMrGn':
+
         swin_transformer = SwinFeatureExtractor(hidden_dim=768)
         vit_transformer = ViTFeatureExtractor(model_name='vit_base_patch16_224', pretrained=True)
         features_projector = DiseaseFeatureProjector(input_dim=768, num_diseases=256, feature_dim=768)
         modality_fusion = ModalityFusion(d_model=768, input_dim=256+197, nhead=8, num_encoder_layers=6, dropout=0.1)
-        findings_decoder = TextDecoder(input_dim=256, hidden_dim=768, max_len=256)
-        # findings_decoder = PretrainedMedicalDecoder(
-        #     model_name='microsoft/biogpt',
-        #     hidden_dim=768,
-        # )
+
+        # 将TextDecoder替换为BLIP_Decoder
+        findings_decoder = BLIP_Decoder(args, tokenizer=tokenizer)
         findings_generator = FindingsGenerator(findings_decoder)
+
         co_attention_module = CoAttentionModule(embed_dim=768)
         multi_label_classifier = MultiLabelClassifier(input_dim=768, hidden_dim=384)
-        impression_decoder = TextDecoder(input_dim=256, hidden_dim=768, max_len=256)
-        # impression_decoder = PretrainedMedicalDecoder(
-        #     model_name='microsoft/biogpt',
-        #     hidden_dim=768,
-        # )
+
+        # 将TextDecoder替换为BLIP_Decoder
+        impression_decoder = BLIP_Decoder(args, tokenizer=tokenizer)
         impression_generator = ImpressionGenerator(impression_decoder)
-        cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor()
+
+        cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor(tokenizer=tokenizer, max_len=256)
 
         model = HiMrGn(image_encoder=vit_transformer,
                        features_projector=features_projector,
@@ -280,7 +299,7 @@ if __name__ == "__main__":
         for i in range(len(gen_outputs)):
             candidate = ''
             for j in range(len(gen_outputs[i])):
-                tok = dataset.vocab.id_to_piece(int(gen_outputs[i,j]))
+                tok = test_data.tokenizer.id_to_piece(int(gen_outputs[i,j]))
                 if tok == '</s>':
                     break # Manually stop generating token after </s> is reached
                 elif tok == '<s>':
@@ -299,7 +318,7 @@ if __name__ == "__main__":
             
             reference = ''
             for j in range(len(gen_targets[i])):
-                tok = dataset.vocab.id_to_piece(int(gen_targets[i,j]))
+                tok = test_data.tokenizer.id_to_piece(int(gen_targets[i,j]))
                 if tok == '</s>':
                     break
                 elif tok == '<s>':

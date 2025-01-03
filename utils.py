@@ -82,7 +82,7 @@ def args_to_kwargs(args, kwargs_list=None): # This function helps distribute inp
 		return args
 	
 def prepare_batch_data(batch, data_loader, device):
-    """准备批次数据，处理图像和文本
+    """准备批次数据，对整个batch进行tokenization
     
     Args:
         batch: 输入的批次数据
@@ -92,22 +92,31 @@ def prepare_batch_data(batch, data_loader, device):
     Returns:
         source_data: 源数据字典
         target_data: 目标数据字典
-        embeddings_cache: 文本嵌入缓存
     """
     # 处理图像数据
     if 'image' in batch:
         batch['image'] = data_to_device(batch['image'], device)
     
-    # 处理文本数据并缓存embeddings
+    # 对整个batch的文本进行tokenization
     text_fields = ['findings', 'impression', 'history']
-    embeddings_cache = {}
     for field in text_fields:
         if field in batch:
-            token_ids, embeddings = data_loader.dataset.get_embeddings(batch[field])
-            embeddings_cache[field] = {
-                'token_ids': token_ids,
-                'embeddings': embeddings
-            }
+            # 收集batch中的所有文本
+            texts = batch[field]
+            # 对整个batch进行tokenization
+            encoded = data_loader.dataset.tokenizer(
+                texts,
+                max_length=data_loader.dataset.max_len,
+                padding='max_length',
+                truncation=True,
+                return_tensors="pt"
+            ).input_ids  # [batch_size, max_len]
+            # 将tokenized tensor移到device上
+            batch[field] = data_to_device(encoded, device)
+    
+    # 将label移到device上
+    if 'label' in batch:
+        batch['label'] = data_to_device(batch['label'], device)
     
     # 组装source和target
     source = []
@@ -116,16 +125,16 @@ def prepare_batch_data(batch, data_loader, device):
     for src in data_loader.dataset.sources:
         if src == 'image':
             source.append(batch['image'])
-        elif src in embeddings_cache:
-            source.append(embeddings_cache[src]['embeddings'])
+        elif src in ['history', 'findings', 'impression']:
+            source.append(batch[src])  # 现在这些是整个batch的token ids tensor
             
     for tgt in data_loader.dataset.targets:
         if tgt == 'label':
-            target.append(data_to_device(batch['label'], device))
-        elif tgt in embeddings_cache:
-            target.append(embeddings_cache[tgt]['token_ids'])
+            target.append(batch['label'])
+        elif tgt in ['findings', 'impression']:
+            target.append(batch[tgt])  # 现在这些是整个batch的token ids tensor
             
-    return source, target, embeddings_cache
+    return source, target, None
 
 # ------ Core Functions ------
 def train(data_loader, model, optimizer, criterion, num_epochs, current_epoch, train_stage=2, scheduler=None, device='cpu', kw_src=None, kw_tgt=None, kw_out=None, scaler=None):
