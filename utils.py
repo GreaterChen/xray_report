@@ -275,6 +275,8 @@ def test(data_loader, model, logger, mode='val', metric_ftns=None, train_stage=2
 
 
 def save(path, model, optimizer=None, scheduler=None, epoch=-1, stats=None):
+	if not os.path.exists(os.path.dirname(path)):
+		os.makedirs(os.path.dirname(path))
 	torch.save({
 		# --- Model Statistics ---
 		'epoch': epoch,

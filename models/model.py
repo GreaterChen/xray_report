@@ -447,7 +447,6 @@ class TextDecoder(nn.Module):
                 except:
                     text = self.tokenizer.decode(tokens, skip_special_tokens=True)
                 decoded_texts.append(text)
-            print(decoded_texts[0])
 
             return output, F_t, decoded_texts
 
@@ -759,13 +758,11 @@ class HiMrGn(nn.Module):
         self.cxr_bert_feature_extractor = cxr_bert_feature_extractor
         self.multi_label_classifier = multi_label_classifier
 
-        self.blip_resnet = blip_resnet()
-
     def forward(self, image, findings=None, impression=None, history=None, train_stage=2, idx=None, mode='train'):
         if train_stage == 1:
             # F_v = self.image_encoder(image[0])   # (B, 196, 768)
 
-            F_v = self.blip_resnet(image[0])
+            F_v = self.image_encoder(image[0])
 
             # fusion_features = self.modality_fusion(F_v, history)
             fusion_features = F_v
@@ -774,8 +771,6 @@ class HiMrGn(nn.Module):
                 findings, _, findings_text, loss_lm = self.findings_decoder(fusion_features, findings)
             else:
                 _, _, findings_text, loss_lm = self.findings_decoder(fusion_features, None)
-            
-            print(findings_text[0])
 
             return {
                 "findings": findings, 
@@ -816,9 +811,9 @@ class HiMrGn(nn.Module):
             }
 
 
-class blip_resnet(nn.Module):
+class ResNet101(nn.Module):
     def __init__(self):
-        super(blip_resnet, self).__init__()
+        super(ResNet101, self).__init__()
         model = getattr(models, 'resnet101')(pretrained=True)
         modules = list(model.children())[:-3]
         self.model = nn.Sequential(*modules)

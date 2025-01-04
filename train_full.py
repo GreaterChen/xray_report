@@ -67,7 +67,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # Data input settings
-    parser.add_argument('--debug', default=True, help='Debug mode.')
+    parser.add_argument('--debug', default=False, help='Debug mode.')
 
     parser.add_argument('--dir', type=str, default='/mnt/chenlb/datasets/mimic_cxr/',
                         help='Path to the directory.')
@@ -81,7 +81,7 @@ def parse_args():
     
     # Model settings
     parser.add_argument('--model_name', type=str, default='HiMrGn', help='Name of the model to use.')
-    parser.add_argument('--backbone_name', type=str, default='SwinT', help='Backbone model name.')
+    parser.add_argument('--backbone_name', type=str, default='ResNet101', help='Backbone model name.')
 
     # HiMrGn-specific settings
     parser.add_argument('--sources', type=str, nargs='+', default=['image', 'findings', 'impression', 'history'],
@@ -98,7 +98,7 @@ def parse_args():
     # Training settings
     parser.add_argument('--phase', type=str, default='TRAIN_STAGE_1', choices=['TRAIN_STAGE_1', 'TRAIN_STAGE_2', 'TEST', 'INFER'],
                         help='Phase of the program: TRAIN, TEST, or INFER.')
-    parser.add_argument('--train_batch_size', type=int, default=16, help='Batch size for training.')
+    parser.add_argument('--train_batch_size', type=int, default=32, help='Batch size for training.')
     parser.add_argument('--val_batch_size', type=int, default=8, help='Batch size for validation.')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of workers for training.')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs for training.')
@@ -161,7 +161,7 @@ if __name__ == "__main__":
                          view_pos=view_pos, max_views=max_views,
                          sources=args.sources, targets=args.targets,
                          train_stage=train_stage, tokenizer=tokenizer,
-                         mode='test')
+                         mode='test', subset_size=10 if debug_mode else None)
 
         # 使用第一个数据集的tokenizer属性
         vocab_size = train_data.tokenizer.vocab_size + 1
@@ -175,7 +175,9 @@ if __name__ == "__main__":
     # Model-specific settings
     if args.model_name == 'HiMrGn':
 
-        swin_transformer = SwinFeatureExtractor(hidden_dim=768)
+        resnet101 = ResNet101()
+
+        # swin_transformer = SwinFeatureExtractor(hidden_dim=768)
         # vit_transformer = ViTFeatureExtractor(model_name='vit_base_patch16_224', pretrained=True)
         # features_projector = DiseaseFeatureProjector(input_dim=768, num_diseases=256, feature_dim=768)
         modality_fusion = ModalityFusion(d_model=768, input_dim=256+197, nhead=8, num_encoder_layers=6, dropout=0.1)
@@ -193,7 +195,7 @@ if __name__ == "__main__":
 
         cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor(tokenizer=tokenizer)
 
-        model = HiMrGn(image_encoder=swin_transformer,
+        model = HiMrGn(image_encoder=resnet101,
                        features_projector=None,
                        modality_fusion=modality_fusion,
                        findings_decoder=findings_generator,
@@ -204,7 +206,8 @@ if __name__ == "__main__":
 
         # Compute parameters for each module
         module_parameters = {
-            "Swin Transformer": count_parameters(swin_transformer),
+            "ResNet101": count_parameters(resnet101),
+            # "Swin Transformer": count_parameters(swin_transformer),
             # "ViT Transformer": count_parameters(vit_transformer),
             # "Features Projector": count_parameters(features_projector),
             "Findings Generator": count_parameters(findings_generator),
@@ -273,11 +276,12 @@ if __name__ == "__main__":
             for k, v in test_met.items():
                 logger.info(f'test_{k}: {v}')
             
-            if val_met['BLEU_1'] > best_metric:
-                best_metric = val_met['BLEU_1']
-                save(os.path.join(args.checkpoint_path_to, f'BLEU_1_{best_metric}.pth'), model, optimizer, scheduler, epoch, (val_loss, test_loss, val_met))
-                logger.info(f'New Best Metric: {best_metric}')
-                logger.info(f'Saved To: {os.path.join(args.checkpoint_path_to, f"BLEU_1_{best_metric}.pth")}')
+            # if val_met['BLEU_1'] > best_metric:
+                # best_metric = val_met['BLEU_1']
+            save_path = os.path.join(args.checkpoint_path_to, f'epoch_{epoch}_BLEU_1_{val_met["BLEU_1"]}.pth')
+            save(save_path, model, optimizer, scheduler, epoch, (val_loss, test_loss, val_met))
+                # logger.info(f'New Best Metric: {best_metric}')
+            logger.info(f'Saved To: {save_path}')
 
     elif args.phase == 'TRAIN_STAGE_2':
         criterion = CombinedLoss(pad_id=pad_id).cuda()
