@@ -86,7 +86,7 @@ class BLIP_Decoder(nn.Module):
             logits, hidden_states, captions = self.generate(encoder_hidden_states)
             return logits, hidden_states, captions, None
 
-    def generate(self, image_embeds, sample=False, num_beams=3, max_length=100, min_length=10, top_p=0.9, repetition_penalty=1.0):
+    def generate(self, image_embeds, sample=False, num_beams=3, max_length=256, min_length=100, top_p=0.9, repetition_penalty=1.0):
         batch_size = image_embeds.size(0)
         
         # 创建attention mask
@@ -94,9 +94,9 @@ class BLIP_Decoder(nn.Module):
         model_kwargs = {
             "encoder_hidden_states": image_embeds, 
             "encoder_attention_mask": image_atts,
-            "output_hidden_states": True,  # 添加这个参数以获取隐藏状态
-            "return_dict_in_generate": True,  # 确保返回字典格式
-            "output_scores": True,  # 获取生成的分数
+            # "output_hidden_states": True,  # 添加这个参数以获取隐藏状态
+            # "return_dict_in_generate": True,  # 确保返回字典格式
+            # "output_scores": True,  # 获取生成的分数
         }
         
         # 初始化输入
@@ -106,8 +106,8 @@ class BLIP_Decoder(nn.Module):
         # 生成文本
         outputs = self.text_decoder.generate(
             input_ids=input_ids,
-            min_length=min_length,
-            max_new_tokens=max_length,
+            # min_length=min_length,
+            max_new_tokens=max_length - 1,
             num_beams=num_beams,
             eos_token_id=self.tokenizer.sep_token_id,
             pad_token_id=self.tokenizer.pad_token_id,
@@ -116,16 +116,8 @@ class BLIP_Decoder(nn.Module):
         )
         
         # 获取生成的序列
-        generated_tokens = outputs.sequences  # (batch_size, seq_len)
-        
-        # 获取logits
-        # 将beam search的scores转换为logits
-        logits = torch.zeros(batch_size, generated_tokens.size(1), len(self.tokenizer)).to(image_embeds.device)
-        if hasattr(outputs, 'scores'):
-            for i, beam_scores in enumerate(outputs.scores):
-                # beam_scores shape: (batch_size * num_beams, vocab_size)
-                # 我们只取第一个beam的分数
-                logits[:, i+1, :] = beam_scores.view(batch_size, num_beams, -1)[:, 0, :]
+        # generated_tokens = outputs.sequences  # (batch_size, seq_len)
+        generated_tokens = outputs
         
         # 由于beam search生成不会返回hidden states，我们需要手动计算
         # 使用forward pass获取hidden states
@@ -146,7 +138,7 @@ class BLIP_Decoder(nn.Module):
             caption = self.tokenizer.decode(tokens, skip_special_tokens=True)
             captions.append(caption)
             
-        return logits, hidden_states, captions
+        return None, hidden_states, captions
 
         
 class CXR_BERT_FeatureExtractor(nn.Module):
@@ -781,7 +773,7 @@ class HiMrGn(nn.Module):
             if mode == 'train':
                 findings, _, findings_text, loss_lm = self.findings_decoder(fusion_features, findings)
             else:
-                findings, _, findings_text, loss_lm = self.findings_decoder(fusion_features, None)
+                _, _, findings_text, loss_lm = self.findings_decoder(fusion_features, None)
             
             print(findings_text[0])
 

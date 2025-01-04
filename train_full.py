@@ -98,7 +98,8 @@ def parse_args():
     # Training settings
     parser.add_argument('--phase', type=str, default='TRAIN_STAGE_1', choices=['TRAIN_STAGE_1', 'TRAIN_STAGE_2', 'TEST', 'INFER'],
                         help='Phase of the program: TRAIN, TEST, or INFER.')
-    parser.add_argument('--batch_size', type=int, default=16, help='Batch size for training.')
+    parser.add_argument('--train_batch_size', type=int, default=16, help='Batch size for training.')
+    parser.add_argument('--val_batch_size', type=int, default=8, help='Batch size for validation.')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of workers for training.')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs for training.')
     parser.add_argument('--lr', type=float, default=5e-5, help='Learning rate.')
@@ -222,9 +223,9 @@ if __name__ == "__main__":
         raise ValueError('Invalid model_name')
 
     # Data loaders
-    train_loader = data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, drop_last=True)
-    val_loader = data.DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
-    test_loader = data.DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    train_loader = data.DataLoader(train_data, batch_size=args.train_batch_size, shuffle=True, num_workers=args.num_workers, drop_last=True)
+    val_loader = data.DataLoader(val_data, batch_size=args.val_batch_size, shuffle=False, num_workers=args.num_workers)
+    test_loader = data.DataLoader(test_data, batch_size=args.val_batch_size, shuffle=False, num_workers=args.num_workers)
 
     # model = nn.DataParallel(model).cuda()
     model = model.cuda()
