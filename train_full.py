@@ -67,7 +67,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # Data input settings
-    parser.add_argument('--debug', default=False, help='Debug mode.')
+    parser.add_argument('--debug', default=True, help='Debug mode.')
 
     parser.add_argument('--dir', type=str, default='/mnt/chenlb/datasets/mimic_cxr/',
                         help='Path to the directory.')
@@ -116,7 +116,7 @@ def parse_args():
     # Reload settings
     parser.add_argument('--reload', action='store_true', help='Reload from a checkpoint.')
     parser.add_argument('--checkpoint_path_from', type=str, default=None, help='Path to load the checkpoint from.')
-    parser.add_argument('--checkpoint_path_to', type=str, default="/home/chenlb/xray_report_generation/results/stage_1/best_model.pth", help='Path to save the checkpoint to.')
+    parser.add_argument('--checkpoint_path_to', type=str, default="/home/chenlb/xray_report_generation/results/stage_1", help='Path to save the checkpoint to.')
 
     return parser.parse_args()
 
@@ -161,7 +161,7 @@ if __name__ == "__main__":
                          view_pos=view_pos, max_views=max_views,
                          sources=args.sources, targets=args.targets,
                          train_stage=train_stage, tokenizer=tokenizer,
-                         mode='test', subset_size=10 if args.phase.startswith('TRAIN') else 100)
+                         mode='test')
 
         # 使用第一个数据集的tokenizer属性
         vocab_size = train_data.tokenizer.vocab_size + 1
@@ -243,7 +243,7 @@ if __name__ == "__main__":
     logger.info(f'Total Parameters: {sum(p.numel() for p in model.parameters())}')
     
     last_epoch = -1
-    best_metric = 1e9
+    best_metric = -1e9
 
     now = datetime.now()  # current date and time
     date_time = now.strftime("%Y-%m-%d_%H:%M:%S")
@@ -266,14 +266,18 @@ if __name__ == "__main__":
             val_loss, val_met = test(val_loader, model, logger, mode='val', metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
             test_loss, test_met = test(test_loader, model, logger, mode='test', metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
             
+            logger.info(f'epoch: {epoch}')
             for k, v in val_met.items():
                 logger.info(f'val_{k}: {v}')
+
+            for k, v in test_met.items():
+                logger.info(f'test_{k}: {v}')
             
-            if best_metric > val_loss:
-                best_metric = val_loss
-                save(args.checkpoint_path_to, model, optimizer, scheduler, epoch, (val_loss, test_loss))
+            if val_met['BLEU_1'] > best_metric:
+                best_metric = val_met['BLEU_1']
+                save(os.path.join(args.checkpoint_path_to, f'BLEU_1_{best_metric}.pth'), model, optimizer, scheduler, epoch, (val_loss, test_loss, val_met))
                 logger.info(f'New Best Metric: {best_metric}')
-                logger.info(f'Saved To: {args.checkpoint_path_to}')
+                logger.info(f'Saved To: {os.path.join(args.checkpoint_path_to, f"BLEU_1_{best_metric}.pth")}')
 
     elif args.phase == 'TRAIN_STAGE_2':
         criterion = CombinedLoss(pad_id=pad_id).cuda()
@@ -286,7 +290,7 @@ if __name__ == "__main__":
             test_loss = test(test_loader, model, metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=2)
             
             scheduler.step()
-            if best_metric > val_loss:
+            if best_metric > val_loss:  # TODO 修改评测指标
                 best_metric = val_loss
                 save(args.checkpoint_path_to, model, optimizer, scheduler, epoch, (val_loss, test_loss))
                 logger.info(f'New Best Metric: {best_metric}')
