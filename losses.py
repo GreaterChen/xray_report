@@ -75,7 +75,7 @@ class SequenceCrossEntropyLoss(nn.Module):
         # 将预测的概率分布展平，适应交叉熵损失的输入
         batch_size, seq_len, vocab_size = predictions.size()
         predictions = predictions.view(-1, vocab_size)  # (B * seq_len, vocab_size)
-        targets = targets.view(-1)  # (B * seq_len)
+        targets = targets.input_ids.view(-1)  # (B * seq_len)
 
         # 忽略填充标记的损失
         loss = F.cross_entropy(predictions, targets, ignore_index=self.pad_id, reduction="mean")

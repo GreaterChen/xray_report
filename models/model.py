@@ -8,7 +8,7 @@ import sentencepiece as spm
 import math
 from models.med import BertConfig, BertModel, BertLMHeadModel
 from transformers import BertTokenizer
-
+import torchvision.models as models
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -37,35 +37,29 @@ class BLIP_Decoder(nn.Module):
         
         # 初始化解码器
         self.text_decoder = BertLMHeadModel.from_pretrained(
-            'microsoft/BiomedVLP-CXR-BERT-specialized',
+            'bert-base-uncased',
             config=decoder_config
         )
         
         # 调整词表大小
         self.text_decoder.resize_token_embeddings(len(self.tokenizer))
 
-    def forward(self, encoder_hidden_states, target_embed=None):
+    def forward(self, encoder_hidden_states, text=None):
         """
         Args:
             encoder_hidden_states: 视觉特征，形状 (B, N_v, C_v)
-            target_embed: 目标文本的token ids，形状 (B, max_len)
+            target_ids: 目标文本的token ids，形状 (B, max_len)
         Returns:
             output: 生成的词汇分布，形状 (B, max_len, vocab_size)
             hidden_states: 文本特征，形状 (B, max_len, hidden_dim)
             decoded_texts: 生成的文本列表
         """
-        if target_embed is not None:
-            # 构建输入
-            attention_mask = (target_embed != self.tokenizer.pad_token_id).long()
-            
-            # 设置decoder targets，忽略padding
-            decoder_targets = target_embed.clone()
-            decoder_targets[decoder_targets == self.tokenizer.pad_token_id] = -100
-            
+        if text is not None:
+            decoder_targets = text.input_ids.masked_fill(text.input_ids == self.tokenizer.pad_token_id, -100)
             # 前向传播
             outputs = self.text_decoder(
-                input_ids=target_embed,
-                attention_mask=attention_mask,
+                input_ids=text.input_ids,
+                attention_mask=text.attention_mask,
                 encoder_hidden_states=encoder_hidden_states,
                 labels=decoder_targets,
                 output_hidden_states=True,  # 添加这个参数以获取隐藏状态
@@ -82,13 +76,15 @@ class BLIP_Decoder(nn.Module):
             for tokens in pred_tokens:
                 text = self.tokenizer.decode(tokens, skip_special_tokens=True)
                 decoded_texts.append(text)
+
+            loss_lm = outputs.loss
             
-            return logits, hidden_states, decoded_texts
+            return logits, hidden_states, decoded_texts, loss_lm
         
         else:
             # 使用generate方法生成文本
             logits, hidden_states, captions = self.generate(encoder_hidden_states)
-            return logits, hidden_states, captions
+            return logits, hidden_states, captions, None
 
     def generate(self, image_embeds, sample=False, num_beams=3, max_length=100, min_length=10, top_p=0.9, repetition_penalty=1.0):
         batch_size = image_embeds.size(0)
@@ -149,9 +145,6 @@ class BLIP_Decoder(nn.Module):
         for tokens in generated_tokens:
             caption = self.tokenizer.decode(tokens, skip_special_tokens=True)
             captions.append(caption)
-        
-        if len(captions) > 0:
-            print(captions[0])
             
         return logits, hidden_states, captions
 
@@ -162,7 +155,7 @@ class CXR_BERT_FeatureExtractor(nn.Module):
         self.device = device
         # 加载预训练的 CXR-BERT 模型和对应的分词器
         self.tokenizer = tokenizer
-        self.model = AutoModel.from_pretrained('microsoft/BiomedVLP-CXR-BERT-specialized', trust_remote_code=True).to(self.device)
+        self.model = AutoModel.from_pretrained('bert-base-uncased', trust_remote_code=True).to(self.device)
 
         # Freeze all parameters in the BERT model (no training of these parameters)
         for param in self.model.parameters():
@@ -198,7 +191,7 @@ class SwinFeatureExtractor(nn.Module):
     def __init__(self, image_encoder_name='swin_large_patch4_window7_224', hidden_dim=768, pretrained=True):
         super().__init__()
         # 加载预训练的 Swin Transformer
-        self.image_encoder = create_model(image_encoder_name, pretrained=False, features_only=True)
+        self.image_encoder = create_model(image_encoder_name, pretrained=True, features_only=True)
 
         # 映射到低维视觉特征 Fv
         self.feature_proj = nn.Sequential(
@@ -335,7 +328,7 @@ class TextDecoder(nn.Module):
     def __init__(self, tokenizer, input_dim=512, hidden_dim=768, num_head=8, num_layers=6, max_len=256):
         super(TextDecoder, self).__init__()
         bert = AutoModel.from_pretrained(
-            'microsoft/BiomedVLP-CXR-BERT-specialized', 
+            'bert-base-uncased', 
             trust_remote_code=True
         )
         self.embedding_layer = bert.bert.embeddings
@@ -588,9 +581,9 @@ class FindingsGenerator(nn.Module):
             findings_text: 生成的文本列表
         """
         # 使用 BLIP_Decoder 进行生成
-        output, F_t, findings_text = self.text_decoder(F_v, target_embed)
+        output, F_t, findings_text, loss_lm = self.text_decoder(F_v, target_embed)
         
-        return output, F_t, findings_text
+        return output, F_t, findings_text, loss_lm
 
 
     
@@ -774,20 +767,28 @@ class HiMrGn(nn.Module):
         self.cxr_bert_feature_extractor = cxr_bert_feature_extractor
         self.multi_label_classifier = multi_label_classifier
 
+        self.blip_resnet = blip_resnet()
+
     def forward(self, image, findings=None, impression=None, history=None, train_stage=2, idx=None, mode='train'):
         if train_stage == 1:
-            F_v = self.image_encoder(image[0])   # (B, 196, 768)
+            # F_v = self.image_encoder(image[0])   # (B, 196, 768)
+
+            F_v = self.blip_resnet(image[0])
 
             # fusion_features = self.modality_fusion(F_v, history)
             fusion_features = F_v
 
             if mode == 'train':
-                findings, _, findings_text = self.findings_decoder(fusion_features, findings)
+                findings, _, findings_text, loss_lm = self.findings_decoder(fusion_features, findings)
             else:
-                findings, _, findings_text = self.findings_decoder(fusion_features, None)
+                findings, _, findings_text, loss_lm = self.findings_decoder(fusion_features, None)
+            
+            print(findings_text[0])
+
             return {
                 "findings": findings, 
                 "findings_text": findings_text,
+                "loss_lm": loss_lm,
                 "impression": None, 
                 "impression_text": None,
                 "F_F": None, 
@@ -823,3 +824,22 @@ class HiMrGn(nn.Module):
             }
 
 
+class blip_resnet(nn.Module):
+    def __init__(self):
+        super(blip_resnet, self).__init__()
+        model = getattr(models, 'resnet101')(pretrained=True)
+        modules = list(model.children())[:-3]
+        self.model = nn.Sequential(*modules)
+        
+        # 添加线性映射层，将1024维降到768维
+        self.dim_reduction = nn.Linear(1024, 768)
+        
+    def forward(self, x):
+        patch_feats = self.model(x)  # (batch_size, 1024, 14, 14)
+        batch_size, feat_size, _, _ = patch_feats.shape
+        
+        # 重排并降维
+        patch_feats = patch_feats.reshape(batch_size, feat_size, -1).permute(0, 2, 1)  # (batch_size, 196, 1024)
+        patch_feats = self.dim_reduction(patch_feats)  # (batch_size, 196, 768)
+        
+        return patch_feats

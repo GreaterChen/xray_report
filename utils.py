@@ -17,8 +17,9 @@ def data_to_device(data, device='cpu'):
 		data = list(data_to_device(item,device) for item in data)
 	elif isinstance(data, dict):
 		data = dict((k,data_to_device(v,device)) for k,v in data.items())
-	else:
-		raise TypeError('Unsupported Datatype! Must be a Tensor/List/Tuple/Dict.')
+	# else:
+		# raise TypeError('Unsupported Datatype! Must be a Tensor/List/Tuple/Dict.')
+        
 	return data
 
 def data_concatenate(iterable_data, dim=0):
@@ -110,10 +111,9 @@ def prepare_batch_data(batch, data_loader, device):
                 padding='max_length',
                 truncation=True,
                 return_tensors="pt"
-            ).input_ids  # [batch_size, max_len]
-            encoded[:, 0] = data_loader.dataset.tokenizer.bos_token_id
-            # 将tokenized tensor移到device上
-            batch[field] = data_to_device(encoded, device)
+            ).to(device)  # [batch_size, max_len]
+            encoded.input_ids[:,0] = data_loader.dataset.tokenizer.bos_token_id
+            batch[field] = encoded
     
     # 将label移到device上
     if 'label' in batch:
@@ -127,18 +127,18 @@ def prepare_batch_data(batch, data_loader, device):
         if src == 'image':
             source.append(batch['image'])
         elif src in ['history', 'findings', 'impression']:
-            source.append(batch[src])  # 现在这些是整个batch的token ids tensor
+            source.append(batch[src])
             
     for tgt in data_loader.dataset.targets:
         if tgt == 'label':
             target.append(batch['label'])
         elif tgt in ['findings', 'impression']:
-            target.append(batch[tgt])  # 现在这些是整个batch的token ids tensor
+            target.append(batch[tgt]) 
             
     return source, target, None
 
 # ------ Core Functions ------
-def train(data_loader, model, optimizer, criterion, num_epochs, current_epoch, train_stage=2, scheduler=None, device='cpu', kw_src=None, kw_tgt=None, kw_out=None, scaler=None):
+def train(data_loader, model, optimizer, criterion, num_epochs, current_epoch, scheduler=None, train_stage=2, device='cpu', kw_src=None, kw_tgt=None, kw_out=None, scaler=None):
     model.train()
     running_loss = 0
 
@@ -158,23 +158,34 @@ def train(data_loader, model, optimizer, criterion, num_epochs, current_epoch, t
 		
         source['idx'] = batch['idx']
         source['mode'] = 'train'
+		
+        scheduler.step(cur_epoch=current_epoch, cur_step=i)
+        current_lr = optimizer.param_groups[0]['lr']
 
         # 剩余的训练逻辑保持不变
         if scaler != None:
             with torch.cuda.amp.autocast():
                 output = data_distributor(model, source)
                 output = args_to_kwargs(output, kw_out)
-                loss, detailed_loss = criterion(output, target)
+                if train_stage == 1:
+                    loss = output['loss_lm']
+                else:
+                    loss, _ = criterion(output, target)
+                # loss, _ = criterion(output, target)
+				
                 
             running_loss += loss.item()
-            prog_bar.set_description('Loss: {}'.format(running_loss/(i+1)))
-
+            prog_bar.set_description(f'Loss: {running_loss/(i+1)} | LR: {current_lr}')
+			
+            loss.backward()
+            torch.nn.utils.clip_grad_value_(model.parameters(), 0.1)
+            optimizer.step()
             optimizer.zero_grad()
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            if scheduler != None:
-                scheduler.step()
+
+            # optimizer.zero_grad()
+            # scaler.scale(loss).backward()
+            # scaler.step(optimizer)
+            # scaler.update()
             
         else:
             output = data_distributor(model, source)
@@ -271,7 +282,7 @@ def save(path, model, optimizer=None, scheduler=None, epoch=-1, stats=None):
 		# --- Model Parameters ---
 		'model_state_dict': model.state_dict(),
 		'optimizer_state_dict': optimizer.state_dict() if optimizer != None else None,
-		'scheduler_state_dict': scheduler.state_dict() if scheduler != None else None,
+		# 'scheduler_state_dict': scheduler.state_dict() if scheduler != None else None,
 	}, path)
 
 def load(path, model, optimizer=None, scheduler=None):

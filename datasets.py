@@ -45,7 +45,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         if cls._shared_data['embedding_model'] is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             cls._shared_data['embedding_model'] = AutoModel.from_pretrained(
-                'microsoft/BiomedVLP-CXR-BERT-specialized',
+                'bert-base-uncased',
                 trust_remote_code=True,
                 local_files_only=True
             ).to(device)
@@ -75,7 +75,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
 
     def __init__(self, directory, input_size=(224,224), random_transform=True,
                 view_pos=['AP'], max_views=2, sources=['image','history'], targets=['label'], 
-                max_len=256, model_name='microsoft/BiomedVLP-CXR-BERT-specialized', train_stage=2, tokenizer=None,
+                max_len=256, model_name='bert-base-uncased', train_stage=2, tokenizer=None,
                 mode='train', subset_size=None):
         
         self.load_shared_data(directory)
@@ -85,7 +85,6 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         # self.embedding_model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.embedding_model = self._shared_data['embedding_model']
-        self.embedding_layer = self.embedding_model.bert.embeddings
         self.tokenizer = tokenizer
         self.bos_token_id = self.tokenizer.bos_token_id
         self.eos_token_id = self.tokenizer.sep_token_id  # BERT使用[SEP]作为EOS
@@ -211,46 +210,46 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         
         self.idx_pidsid = [(pid, sid, uuid) for pid, sid, uuid in selected_files]
     
-    def get_embeddings(self, text, max_len=None, device="cuda"):
-        # Tokenize
-        encoded = self.tokenizer(
-            text,
-            add_special_tokens=True,
-            max_length=max_len if max_len is not None else self.max_len,
-            padding='max_length',
-            truncation=True,
-            return_tensors='pt'  # 返回PyTorch张量
-        )
+    # def get_embeddings(self, text, max_len=None, device="cuda"):
+    #     # Tokenize
+    #     encoded = self.tokenizer(
+    #         text,
+    #         add_special_tokens=True,
+    #         max_length=max_len if max_len is not None else self.max_len,
+    #         padding='max_length',
+    #         truncation=True,
+    #         return_tensors='pt'  # 返回PyTorch张量
+    #     )
 
-        input_ids = encoded['input_ids'].to(device)
-        token_type_ids = encoded['token_type_ids'].to(device)
+    #     input_ids = encoded['input_ids'].to(device)
+    #     token_type_ids = encoded['token_type_ids'].to(device)
         
-        # 直接使用embedding层
-        with torch.no_grad():
-            embeddings = self.embedding_layer(
-                input_ids=input_ids,
-                token_type_ids=token_type_ids
-            )
-            embeddings = embeddings.squeeze(0)  # 移除batch维度
+    #     # 直接使用embedding层
+    #     with torch.no_grad():
+    #         embeddings = self.embedding_layer(
+    #             input_ids=input_ids,
+    #             token_type_ids=token_type_ids
+    #         )
+    #         embeddings = embeddings.squeeze(0)  # 移除batch维度
             
-        return input_ids, embeddings
+    #     return input_ids, embeddings
     
-    def get_token_ids(self, text, max_len=None):
-        """
-        只获取token ids，不进行embedding转换
-        Returns:
-            token_ids: shape (seq_len,) 包含padding的token id序列
-        """
-        encoded = self.tokenizer.encode_plus(
-            text,
-            add_special_tokens=True,
-            max_length=max_len if max_len is not None else self.max_len,
-            padding='max_length',
-            truncation=True,
-            return_tensors='pt'
-        )
+    # def get_token_ids(self, text, max_len=None):
+    #     """
+    #     只获取token ids，不进行embedding转换
+    #     Returns:
+    #         token_ids: shape (seq_len,) 包含padding的token id序列
+    #     """
+    #     encoded = self.tokenizer.encode_plus(
+    #         text,
+    #         add_special_tokens=True,
+    #         max_length=max_len if max_len is not None else self.max_len,
+    #         padding='max_length',
+    #         truncation=True,
+    #         return_tensors='pt'
+    #     )
 
-        return encoded['input_ids'].squeeze(0)
+    #     return encoded['input_ids'].squeeze(0)
 
     @staticmethod
     def __get_reports_images(directory, file_name='reports.json'):

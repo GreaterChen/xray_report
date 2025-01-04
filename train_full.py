@@ -26,6 +26,7 @@ from datasets import MIMIC
 from losses import *
 from models.model import *
 from metrics import compute_scores
+from tools.optims import *
 
 logger = setup_logger(log_dir='logs')
 
@@ -66,7 +67,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # Data input settings
-    parser.add_argument('--debug', default=True, help='Debug mode.')
+    parser.add_argument('--debug', default=False, help='Debug mode.')
 
     parser.add_argument('--dir', type=str, default='/mnt/chenlb/datasets/mimic_cxr/',
                         help='Path to the directory.')
@@ -98,10 +99,13 @@ def parse_args():
     parser.add_argument('--phase', type=str, default='TRAIN_STAGE_1', choices=['TRAIN_STAGE_1', 'TRAIN_STAGE_2', 'TEST', 'INFER'],
                         help='Phase of the program: TRAIN, TEST, or INFER.')
     parser.add_argument('--batch_size', type=int, default=16, help='Batch size for training.')
-    parser.add_argument('--num_workers', type=int, default=6, help='Number of workers for training.')
-    parser.add_argument('--epochs', type=int, default=100, help='Number of epochs for training.')
-    parser.add_argument('--lr', type=float, default=1e-5, help='Learning rate.')
-    parser.add_argument('--wd', type=float, default=1e-2, help='Weight decay (L2 regularization).')
+    parser.add_argument('--num_workers', type=int, default=4, help='Number of workers for training.')
+    parser.add_argument('--epochs', type=int, default=10, help='Number of epochs for training.')
+    parser.add_argument('--lr', type=float, default=5e-5, help='Learning rate.')
+    parser.add_argument('--min_lr', type=float, default=5e-6, help='Minimum learning rate.')
+    parser.add_argument('--warmup_lr', type=float, default=5e-7, help='Warmup learning rate.')
+    parser.add_argument('--warmup_steps', type=int, default=2000, help='Warmup steps.')
+    parser.add_argument('--wd', type=float, default=0.05, help='Weight decay (L2 regularization).')
     parser.add_argument('--dropout', type=float, default=0.1, help='Dropout rate.')
 
     # Device settings
@@ -131,7 +135,7 @@ if __name__ == "__main__":
         num_classes = 2
         view_pos = ['AP']
 
-        tokenizer = BertTokenizer.from_pretrained('microsoft/BiomedVLP-CXR-BERT-specialized', local_files_only=True)
+        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', local_files_only=True)
         tokenizer.add_special_tokens({'bos_token': '[DEC]'})
 
         # 设置训练阶段和调试模式
@@ -144,7 +148,7 @@ if __name__ == "__main__":
                           view_pos=view_pos, max_views=max_views,
                           sources=args.sources, targets=args.targets,
                           train_stage=train_stage, tokenizer=tokenizer,
-                          mode='train', subset_size=3000 if debug_mode else None)
+                          mode='train', subset_size=200 if debug_mode else None)
         
         val_data = MIMIC(args.dir, input_size, random_transform=False,
                         view_pos=view_pos, max_views=max_views,
@@ -222,9 +226,18 @@ if __name__ == "__main__":
     val_loader = data.DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
     test_loader = data.DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
-    model = nn.DataParallel(model).cuda()
+    # model = nn.DataParallel(model).cuda()
+    model = model.cuda()
     optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=args.wd)
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[25, 40, 55, 70, 85])
+    scheduler = LinearWarmupCosineLRScheduler(
+            optimizer, 
+            args.epochs, 
+            args.min_lr, 
+            args.lr, 
+            decay_rate=None, 
+            warmup_start_lr=args.warmup_lr,
+            warmup_steps=args.warmup_steps,
+        )
 
     logger.info(f'Total Parameters: {sum(p.numel() for p in model.parameters())}')
     
@@ -248,14 +261,13 @@ if __name__ == "__main__":
 
         for epoch in range(last_epoch+1, args.epochs):
             print(f'Epoch: {epoch}')
-            train_loss = train(train_loader, model, optimizer, criterion, num_epochs=args.epochs, current_epoch=epoch, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, scaler=scaler, train_stage=1)
+            train_loss = train(train_loader, model, optimizer, criterion, scheduler=scheduler, num_epochs=args.epochs, current_epoch=epoch, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, scaler=scaler, train_stage=1)
             val_loss, val_met = test(val_loader, model, logger, mode='val', metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
             test_loss, test_met = test(test_loader, model, logger, mode='test', metric_ftns=metrics, criterion=criterion, device='cuda', kw_src=args.kw_src, kw_tgt=args.kw_tgt, kw_out=args.kw_out, return_results=False, train_stage=1)
             
             for k, v in val_met.items():
                 logger.info(f'val_{k}: {v}')
             
-            scheduler.step()
             if best_metric > val_loss:
                 best_metric = val_loss
                 save(args.checkpoint_path_to, model, optimizer, scheduler, epoch, (val_loss, test_loss))
