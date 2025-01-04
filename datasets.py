@@ -75,7 +75,7 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
 
     def __init__(self, directory, input_size=(224,224), random_transform=True,
                 view_pos=['AP'], max_views=2, sources=['image','history'], targets=['label'], 
-                max_len=256, model_name='bert-base-uncased', train_stage=2, tokenizer=None,
+                max_len=196, model_name='bert-base-uncased', train_stage=2, tokenizer=None,
                 mode='train', subset_size=None):
         
         self.load_shared_data(directory)

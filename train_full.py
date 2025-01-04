@@ -78,6 +78,7 @@ def parse_args():
     parser.add_argument('--image_size', type=int, default=224, help='Input image size.')
     parser.add_argument('--dataset_name', type=str, default='MIMIC', choices=['MIMIC', 'NIHCXR', 'NLMCXR'],
                         help='Dataset name to use.')
+    parser.add_argument('--max_len', type=int, default=196, help='Maximum length of the input text.')
     
     # Model settings
     parser.add_argument('--model_name', type=str, default='HiMrGn', help='Name of the model to use.')
@@ -145,19 +146,19 @@ if __name__ == "__main__":
 
         MIMIC.load_shared_data(args.dir)
         # 创建训练、验证和测试数据集
-        train_data = MIMIC(args.dir, input_size, random_transform=True,
+        train_data = MIMIC(args.dir, input_size, max_len=args.max_len, random_transform=True,
                           view_pos=view_pos, max_views=max_views,
                           sources=args.sources, targets=args.targets,
                           train_stage=train_stage, tokenizer=tokenizer,
                           mode='train', subset_size=200 if debug_mode else None)
         
-        val_data = MIMIC(args.dir, input_size, random_transform=False,
+        val_data = MIMIC(args.dir, input_size, max_len=args.max_len, random_transform=False,
                         view_pos=view_pos, max_views=max_views,
                         sources=args.sources, targets=args.targets,
                         train_stage=train_stage, tokenizer=tokenizer,
                         mode='val', subset_size=10 if args.phase.startswith('TRAIN') else 100)
         
-        test_data = MIMIC(args.dir, input_size, random_transform=False,
+        test_data = MIMIC(args.dir, input_size, max_len=args.max_len, random_transform=False,
                          view_pos=view_pos, max_views=max_views,
                          sources=args.sources, targets=args.targets,
                          train_stage=train_stage, tokenizer=tokenizer,
