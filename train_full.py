@@ -162,8 +162,8 @@ if __name__ == "__main__":
                          view_pos=view_pos, max_views=max_views,
                          sources=args.sources, targets=args.targets,
                          train_stage=train_stage, tokenizer=tokenizer,
-                         mode='test', subset_size=10 if args.phase.startswith('TRAIN') else 100)
-
+                         mode='test', subset_size=10 if debug_mode else None)
+        
         # 使用第一个数据集的tokenizer属性
         vocab_size = train_data.tokenizer.vocab_size + 1
         posit_size = train_data.max_len
@@ -230,6 +230,11 @@ if __name__ == "__main__":
     train_loader = data.DataLoader(train_data, batch_size=args.train_batch_size, shuffle=True, num_workers=args.num_workers, drop_last=True)
     val_loader = data.DataLoader(val_data, batch_size=args.val_batch_size, shuffle=False, num_workers=args.num_workers)
     test_loader = data.DataLoader(test_data, batch_size=args.val_batch_size, shuffle=False, num_workers=args.num_workers)
+
+    # 打印数量
+    logger.info(f'Train Data Size: {len(train_data)}')
+    logger.info(f'Val Data Size: {len(val_data)}')
+    logger.info(f'Test Data Size: {len(test_data)}')
 
     # model = nn.DataParallel(model).cuda()
     model = model.cuda()

@@ -174,11 +174,11 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
     def __setup_dataset_split(self):
         """根据mode设置相应的数据集划分"""
         if self.train_stage == 1:
-            all_files = np.loadtxt(os.path.join(self.dir, 'train_val_list_findings.txt'), dtype=str)
-            test_files = np.loadtxt(os.path.join(self.dir, 'test_list_findings.txt'), dtype=str)
+            all_files = np.loadtxt(os.path.join(self.dir, 'train_val_list_findings_new.txt'), dtype=str)
+            test_files = np.loadtxt(os.path.join(self.dir, 'test_list_findings_new.txt'), dtype=str)
         else:
-            all_files = np.loadtxt(os.path.join(self.dir, 'train_val_list_findings_impression.txt'), dtype=str)
-            test_files = np.loadtxt(os.path.join(self.dir, 'test_list_findings_impression.txt'), dtype=str)
+            all_files = np.loadtxt(os.path.join(self.dir, 'train_val_list_findings_impression_new.txt'), dtype=str)
+            test_files = np.loadtxt(os.path.join(self.dir, 'test_list_findings_impression_new.txt'), dtype=str)
             
         all_files = np.array([f.split('/') for f in all_files])
         test_files = np.array([f.split('/') for f in test_files])
@@ -191,8 +191,8 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         else:
             # 划分训练集和验证集
             indices = np.random.permutation(len(all_files))
-            train_idx = indices[:int(0.9 * len(all_files))]
-            val_idx = indices[int(0.9 * len(all_files)):]
+            train_idx = indices[:-200]
+            val_idx = indices[-200:]
             
             if self.mode == 'train':
                 selected_files = all_files[train_idx]
