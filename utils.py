@@ -244,7 +244,7 @@ def test(data_loader, model, logger, mode='val', metric_ftns=None, train_stage=2
                 impression_preds_list.extend([re for re in output['impression_text']])
             
             # 记录日志
-            logger.info(f"findings_preds: {findings_preds_list[0]}")
+            logger.info(f"findings_preds: {output['findings_text'][0]}")
 
             # 计算损失
             if criterion is not None:

@@ -162,7 +162,7 @@ if __name__ == "__main__":
                          view_pos=view_pos, max_views=max_views,
                          sources=args.sources, targets=args.targets,
                          train_stage=train_stage, tokenizer=tokenizer,
-                         mode='test', subset_size=10 if debug_mode else None)
+                         mode='test', subset_size=10 if args.phase.startswith('TRAIN') else 100)
 
         # 使用第一个数据集的tokenizer属性
         vocab_size = train_data.tokenizer.vocab_size + 1
