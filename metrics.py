@@ -11,6 +11,7 @@ def compute_scores(gts, res):
     :param res: Dictionary with the image ids ant their generated captions
     :print: Evaluation score (the mean of the scores of all the instances) for each measure
     """
+
     # post-processing, make format consistent
     for k in res.keys():
         res[k][0] = (res[k][0]+' ').replace('. ', ' . ').replace(' - ', '-')

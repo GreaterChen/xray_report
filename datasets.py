@@ -2,6 +2,7 @@
 import os
 import json
 import pickle
+import re
 import numpy as np
 import pandas as pd
 
@@ -82,17 +83,23 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
                                     (0.229, 0.224, 0.225))])
 
     def __len__(self):
-        return len(self.data)
+        if self.subset_size is not None:
+            return self.subset_size
+        else:
+            return len(self.data)
     
     def __getitem__(self, idx):
         info = self.data[idx]
-        
+
+        impression = self.my_pre_caption(info['impression'])
+        findings = self.my_pre_caption(info['findings'])
+        history = self.my_pre_caption(info['history'])
         output = {
-            'findings': info['findings'],
-            'impression': info['impression'],
-            'history': info['history'],
+            'findings': findings,
+            'impression': impression,
+            'history': history,
             'label': info['labels'],
-            'gts': [info['findings'], info['impression']]
+            'gts': [findings, impression]
         }
 
         
@@ -103,6 +110,28 @@ class MIMIC(data.Dataset): # MIMIC-CXR Dataset
         output['image'] = img
 
         return output
+    
+    def clean_report_mimic_cxr(self, report):
+        report_cleaner = lambda t: t.replace('\n', ' ').replace('__', '_').replace('__', '_').replace('__', '_') \
+                .replace('__', '_').replace('__', '_').replace('__', '_').replace('__', '_').replace('  ', ' ') \
+                .replace('  ', ' ').replace('  ', ' ').replace('  ', ' ').replace('  ', ' ').replace('  ', ' ') \
+                .replace('..', '.').replace('..', '.').replace('..', '.').replace('..', '.').replace('..', '.') \
+                .replace('..', '.').replace('..', '.').replace('..', '.').replace('1. ', '').replace('. 2. ', '. ') \
+                .replace('. 3. ', '. ').replace('. 4. ', '. ').replace('. 5. ', '. ').replace(' 2. ', '. ') \
+                .replace(' 3. ', '. ').replace(' 4. ', '. ').replace(' 5. ', '. ') \
+                .strip().lower().split('. ')
+        sent_cleaner = lambda t: re.sub('[.,?;*!%^&_+():-\[\]{}]', '', t.replace('"', '').replace('/', '').replace('\\', '').replace("'", '').strip().lower())
+        tokens = [sent_cleaner(sent) for sent in report_cleaner(report) if sent_cleaner(sent) != []]
+        report = ' . '.join(tokens) + ' .'
+        return report
+
+    def my_pre_caption(self, caption, max_words=196):
+        caption = self.clean_report_mimic_cxr(caption)
+        #truncate caption
+        caption_words = caption.split(' ')
+        if len(caption_words)>max_words:
+            caption = ' '.join(caption_words[:])
+        return caption
     
 
     # def get_embeddings(self, text, max_len=None, device="cuda"):
