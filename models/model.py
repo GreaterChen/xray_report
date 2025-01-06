@@ -523,11 +523,9 @@ class HiMrGn(nn.Module):
         self.cxr_bert_feature_extractor = cxr_bert_feature_extractor
         self.multi_label_classifier = multi_label_classifier
 
-    def forward(self, image, findings=None, impression=None, history=None, train_stage=2, idx=None, mode='train'):
+    def forward(self, image, findings=None, impression=None, history=None, train_stage=2, mode='train'):
         if train_stage == 1:
-            # F_v = self.image_encoder(image[0])   # (B, 196, 768)
-
-            F_v = self.image_encoder(image[0])
+            F_v = self.image_encoder(image)
 
             # fusion_features = self.modality_fusion(F_v, history)
             fusion_features = F_v
@@ -579,12 +577,16 @@ class HiMrGn(nn.Module):
 class ResNet101(nn.Module):
     def __init__(self):
         super(ResNet101, self).__init__()
-        model = getattr(models, 'resnet101')(pretrained=True)
+        model = getattr(models, 'resnet101')(weights=models.ResNet101_Weights.IMAGENET1K_V1)
         modules = list(model.children())[:-3]
         self.model = nn.Sequential(*modules)
         
         # 添加线性映射层，将1024维降到768维
-        self.dim_reduction = nn.Linear(1024, 768)
+        self.dim_reduction = nn.Sequential(
+            nn.Linear(1024, 512),  # 降到中间的低维度
+            nn.ReLU(),             # 非线性激活
+            nn.Linear(512, 768)    # 再升到目标维度
+        )
         
     def forward(self, x):
         patch_feats = self.model(x)  # (batch_size, 1024, 14, 14)

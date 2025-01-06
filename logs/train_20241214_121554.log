@@ -1,9 +1,0 @@
-2024-12-14 12:16:46,949 - Swin Transformer: 196174356 parameters
-2024-12-14 12:16:46,949 - Features Projector: 151191552 parameters
-2024-12-14 12:16:46,949 - Findings Generator: 94575930 parameters
-2024-12-14 12:16:46,950 - Modality Fusion: 42876672 parameters
-2024-12-14 12:16:46,950 - Co-Attention Module: 85100544 parameters
-2024-12-14 12:16:46,950 - Multi-Label Classifier: 373070 parameters
-2024-12-14 12:16:46,950 - Impression Generator: 94575930 parameters
-2024-12-14 12:16:46,950 - CXR BERT Feature Extractor: 0 parameters
-2024-12-14 12:16:47,297 - Total Parameters: 664890852

@@ -99,7 +99,7 @@ def parse_args():
     # Training settings
     parser.add_argument('--phase', type=str, default='TRAIN_STAGE_1', choices=['TRAIN_STAGE_1', 'TRAIN_STAGE_2', 'TEST', 'INFER'],
                         help='Phase of the program: TRAIN, TEST, or INFER.')
-    parser.add_argument('--train_batch_size', type=int, default=32, help='Batch size for training.')
+    parser.add_argument('--train_batch_size', type=int, default=48, help='Batch size for training.')
     parser.add_argument('--val_batch_size', type=int, default=8, help='Batch size for validation.')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of workers for training.')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs for training.')
@@ -132,44 +132,30 @@ if __name__ == "__main__":
     # Dataset-specific settings
     if args.dataset_name == 'MIMIC':
         input_size = (args.image_size, args.image_size)
-        max_views = 2
-        num_labels = 114
-        num_classes = 2
-        view_pos = ['AP']
 
         tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', local_files_only=True)
         tokenizer.add_special_tokens({'bos_token': '[DEC]'})
+        vocab_size = len(tokenizer)
+        pad_id = tokenizer.pad_token_id
 
         # 设置训练阶段和调试模式
         train_stage = 1 if args.phase == "TRAIN_STAGE_1" else 2
-        debug_mode = args.debug if hasattr(args, 'debug') else False
 
         MIMIC.load_shared_data(args.dir)
         # 创建训练、验证和测试数据集
-        train_data = MIMIC(args.dir, input_size, max_len=args.max_len, random_transform=True,
-                          view_pos=view_pos, max_views=max_views,
-                          sources=args.sources, targets=args.targets,
+        train_data = MIMIC(args.dir, input_size, random_transform=True,
                           train_stage=train_stage, tokenizer=tokenizer,
-                          mode='train', subset_size=200 if debug_mode else None)
+                          mode='train', max_len=args.max_len, subset_size=200 if args.debug else None)
         
-        val_data = MIMIC(args.dir, input_size, max_len=args.max_len, random_transform=False,
-                        view_pos=view_pos, max_views=max_views,
-                        sources=args.sources, targets=args.targets,
+        val_data = MIMIC(args.dir, input_size, random_transform=False,
                         train_stage=train_stage, tokenizer=tokenizer,
-                        mode='val', subset_size=10 if args.phase.startswith('TRAIN') else 100)
+                        mode='val', max_len=args.max_len, subset_size=10 if args.phase.startswith('TRAIN') else 100)
         
-        test_data = MIMIC(args.dir, input_size, max_len=args.max_len, random_transform=False,
-                         view_pos=view_pos, max_views=max_views,
-                         sources=args.sources, targets=args.targets,
+        test_data = MIMIC(args.dir, input_size, random_transform=False,
                          train_stage=train_stage, tokenizer=tokenizer,
-                         mode='test', subset_size=10 if debug_mode else None)
+                         mode='test', max_len=args.max_len, subset_size=10 if args.debug else None)
         
-        # 使用第一个数据集的tokenizer属性
-        vocab_size = train_data.tokenizer.vocab_size + 1
-        posit_size = train_data.max_len
-        pad_id = train_data.tokenizer.pad_token_id
         comment = f'Stage{args.phase}'
-
     else:
         raise ValueError('Invalid dataset_name')
 

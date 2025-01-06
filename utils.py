@@ -124,16 +124,10 @@ def prepare_batch_data(batch, data_loader, device):
     target = []
     
     for src in data_loader.dataset.sources:
-        if src == 'image':
-            source.append(batch['image'])
-        elif src in ['history', 'findings', 'impression']:
-            source.append(batch[src])
-            
+        source.append(batch[src])
+
     for tgt in data_loader.dataset.targets:
-        if tgt == 'label':
-            target.append(batch['label'])
-        elif tgt in ['findings', 'impression']:
-            target.append(batch[tgt]) 
+        target.append(batch[tgt])
             
     return source, target, None
 
@@ -155,8 +149,6 @@ def train(data_loader, model, optimizer, criterion, num_epochs, current_epoch, s
         target = args_to_kwargs(target, kw_tgt)
         
         source['train_stage'] = train_stage
-		
-        source['idx'] = batch['idx']
         source['mode'] = 'train'
 		
         scheduler.step(cur_epoch=current_epoch, cur_step=i)
