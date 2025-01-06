@@ -30,7 +30,7 @@ class BLIP_Decoder(nn.Module):
         self.prompt = prompt
         
         # 加载BERT配置
-        decoder_config = BertConfig.from_json_file('/home/chenlb/xray_report_generation/configs/bert_config.json')
+        decoder_config = BertConfig.from_json_file(os.path.join(args.root_dir, 'configs/bert_config.json'))
         decoder_config.encoder_width = hidden_dim
         decoder_config.add_cross_attention = True
         decoder_config.is_decoder = True

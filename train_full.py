@@ -69,12 +69,10 @@ def parse_args():
     # Data input settings
     parser.add_argument('--debug', default=False, help='Debug mode.')
 
-    parser.add_argument('--dir', type=str, default='/mnt/chenlb/datasets/mimic_cxr/',
+    parser.add_argument('--root_dir', type=str, default='/home/chenlb/xray_report_generation/', help='Root directory.')
+
+    parser.add_argument('--data_dir', type=str, default='/mnt/chenlb/datasets/mimic_cxr/',
                         help='Path to the directory.')
-    parser.add_argument('--image_dir', type=str, default='/mnt/chenlb/datasets/mimic_cxr/images/',
-                        help='Path to the directory containing the image data.')
-    parser.add_argument('--ann_path', type=str, default='/mnt/chenlb/datasets/mimic_cxr/mimic_annotation_promptmrg_new.json',
-                        help='Path to the annotation file.')
     parser.add_argument('--image_size', type=int, default=224, help='Input image size.')
     parser.add_argument('--dataset_name', type=str, default='MIMIC', choices=['MIMIC', 'NIHCXR', 'NLMCXR'],
                         help='Dataset name to use.')
@@ -117,9 +115,9 @@ def parse_args():
     # Reload settings
     parser.add_argument('--reload', action='store_true', help='Reload from a checkpoint.')
     parser.add_argument('--checkpoint_path_from', type=str, default=None, help='Path to load the checkpoint from.')
-    parser.add_argument('--checkpoint_path_to', type=str, default="/home/chenlb/xray_report_generation/results/stage_1", help='Path to save the checkpoint to.')
+    parser.add_argument('--checkpoint_path_to', type=str, default="/home/chenlb/xray_report_generation/results/new_data/stage_1", help='Path to save the checkpoint to.')
 
-    return parser.parse_args()
+    return parser.parse_args() 
 
 # --- Main Program ---
 if __name__ == "__main__":
@@ -141,17 +139,17 @@ if __name__ == "__main__":
         # 设置训练阶段和调试模式
         train_stage = 1 if args.phase == "TRAIN_STAGE_1" else 2
 
-        MIMIC.load_shared_data(args.dir)
+        MIMIC.load_shared_data(args.data_dir)
         # 创建训练、验证和测试数据集
-        train_data = MIMIC(args.dir, input_size, random_transform=True,
+        train_data = MIMIC(args.data_dir, input_size, random_transform=True,
                           train_stage=train_stage, tokenizer=tokenizer,
                           mode='train', max_len=args.max_len, subset_size=200 if args.debug else None)
         
-        val_data = MIMIC(args.dir, input_size, random_transform=False,
+        val_data = MIMIC(args.data_dir, input_size, random_transform=False,
                         train_stage=train_stage, tokenizer=tokenizer,
                         mode='val', max_len=args.max_len, subset_size=10 if args.phase.startswith('TRAIN') else 100)
         
-        test_data = MIMIC(args.dir, input_size, random_transform=False,
+        test_data = MIMIC(args.data_dir, input_size, random_transform=False,
                          train_stage=train_stage, tokenizer=tokenizer,
                          mode='test', max_len=args.max_len, subset_size=10 if args.debug else None)
         
@@ -169,14 +167,12 @@ if __name__ == "__main__":
         # features_projector = DiseaseFeatureProjector(input_dim=768, num_diseases=256, feature_dim=768)
         modality_fusion = ModalityFusion(d_model=768, input_dim=256+197, nhead=8, num_encoder_layers=6, dropout=0.1)
 
-        # 将TextDecoder替换为BLIP_Decoder
         findings_decoder = BLIP_Decoder(args, tokenizer=tokenizer)
         findings_generator = FindingsGenerator(findings_decoder)
 
         co_attention_module = CoAttentionModule(embed_dim=768)
         multi_label_classifier = MultiLabelClassifier(input_dim=768, hidden_dim=384)
 
-        # 将TextDecoder替换为BLIP_Decoder
         impression_decoder = BLIP_Decoder(args, tokenizer=tokenizer)
         impression_generator = ImpressionGenerator(impression_decoder)
 

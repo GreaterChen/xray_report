@@ -224,7 +224,6 @@ def test(data_loader, model, logger, mode='val', metric_ftns=None, train_stage=2
             target = args_to_kwargs(target, kw_tgt)
             
             source['train_stage'] = train_stage
-            source['idx'] = batch['idx']
             source['mode'] = mode
             # 模型推理
             output = data_distributor(model, source)
