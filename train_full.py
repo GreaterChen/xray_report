@@ -94,7 +94,29 @@ def parse_args():
         help="Dataset name to use.",
     )
     parser.add_argument(
-        "--max_len", type=int, default=196, help="Maximum length of the input text."
+        "--max_len_findings",
+        type=int,
+        default=196,
+        help="Maximum length of the input text.",
+    )
+    parser.add_argument(
+        "--max_len_impression",
+        type=int,
+        default=196,
+        help="Maximum length of the input text.",
+    )
+    parser.add_argument(
+        "--max_len_history",
+        type=int,
+        default=50,
+        help="Maximum length of the input text.",
+    )
+
+    parser.add_argument(
+        "--tokenizer_max_len",
+        type=int,
+        default=30523,
+        help="Maximum length of the tokenizer.",
     )
 
     # Model settings
@@ -233,7 +255,6 @@ if __name__ == "__main__":
             train_stage=train_stage,
             tokenizer=tokenizer,
             mode="train",
-            max_len=args.max_len,
             subset_size=200 if args.debug else None,
         )
 
@@ -244,7 +265,6 @@ if __name__ == "__main__":
             train_stage=train_stage,
             tokenizer=tokenizer,
             mode="val",
-            max_len=args.max_len,
             subset_size=10 if args.phase.startswith("TRAIN") else 100,
         )
 
@@ -255,7 +275,6 @@ if __name__ == "__main__":
             train_stage=train_stage,
             tokenizer=tokenizer,
             mode="test",
-            max_len=args.max_len,
             subset_size=10 if args.debug else None,
         )
 
@@ -271,9 +290,10 @@ if __name__ == "__main__":
         # swin_transformer = SwinFeatureExtractor(hidden_dim=768)
         # vit_transformer = ViTFeatureExtractor(model_name='vit_base_patch16_224', pretrained=True)
         # features_projector = DiseaseFeatureProjector(input_dim=768, num_diseases=256, feature_dim=768)
-        modality_fusion = ModalityFusion(
-            d_model=768, input_dim=256 + 197, nhead=8, num_encoder_layers=6, dropout=0.1
-        )
+
+        history_encoder = HistoryEncoder(args)
+
+        modality_fusion = ModalityFusion(hidden_size=768)
 
         findings_decoder = BLIP_Decoder(args, tokenizer=tokenizer)
         findings_generator = FindingsGenerator(findings_decoder)
@@ -288,7 +308,7 @@ if __name__ == "__main__":
 
         model = HiMrGn(
             image_encoder=resnet101,
-            features_projector=None,
+            history_encoder=history_encoder,
             modality_fusion=modality_fusion,
             findings_decoder=findings_generator,
             multi_label_classifier=multi_label_classifier,
@@ -300,9 +320,6 @@ if __name__ == "__main__":
         # Compute parameters for each module
         module_parameters = {
             "ResNet101": count_parameters(resnet101),
-            # "Swin Transformer": count_parameters(swin_transformer),
-            # "ViT Transformer": count_parameters(vit_transformer),
-            # "Features Projector": count_parameters(features_projector),
             "Findings Generator": count_parameters(findings_generator),
             "Modality Fusion": count_parameters(modality_fusion),
             "Co-Attention Module": count_parameters(co_attention_module),
@@ -388,6 +405,7 @@ if __name__ == "__main__":
         for epoch in range(last_epoch + 1, args.epochs):
             print(f"Epoch: {epoch}")
             train_loss = train(
+                args,
                 train_loader,
                 model,
                 optimizer,
@@ -403,6 +421,7 @@ if __name__ == "__main__":
                 train_stage=1,
             )
             val_loss, val_met = test(
+                args,
                 val_loader,
                 model,
                 logger,
@@ -417,6 +436,7 @@ if __name__ == "__main__":
                 train_stage=1,
             )
             test_loss, test_met = test(
+                args,
                 test_loader,
                 model,
                 logger,
@@ -438,8 +458,6 @@ if __name__ == "__main__":
             for k, v in test_met.items():
                 logger.info(f"test_{k}: {v}")
 
-            # if val_met['BLEU_1'] > best_metric:
-            # best_metric = val_met['BLEU_1']
             save_path = os.path.join(
                 args.checkpoint_path_to, f'epoch_{epoch}_BLEU_1_{val_met["BLEU_1"]}.pth'
             )
@@ -451,7 +469,6 @@ if __name__ == "__main__":
                 epoch,
                 (val_loss, test_loss, val_met),
             )
-            # logger.info(f'New Best Metric: {best_metric}')
             logger.info(f"Saved To: {save_path}")
 
     elif args.phase == "TRAIN_STAGE_2":
@@ -461,6 +478,7 @@ if __name__ == "__main__":
         for epoch in range(last_epoch + 1, args.epochs):
             print(f"Epoch: {epoch}")
             train_loss = train(
+                args,
                 train_loader,
                 model,
                 optimizer,
@@ -473,6 +491,7 @@ if __name__ == "__main__":
                 train_stage=2,
             )
             val_loss = test(
+                args,
                 val_loader,
                 model,
                 metric_ftns=metrics,
@@ -485,6 +504,7 @@ if __name__ == "__main__":
                 train_stage=2,
             )
             test_loss = test(
+                args,
                 test_loader,
                 model,
                 metric_ftns=metrics,
@@ -590,10 +610,6 @@ if __name__ == "__main__":
                 else:  # letter
                     reference += tok
             out_file_ref.write(reference + "\n")
-
-        # for i in tqdm(range(len(test_data))):
-        #     target = test_data[i][1] # caption, label
-        #     out_file_lbl.write(' '.join(map(str,target[1])) + '\n')
 
     else:
         raise ValueError("Invalid PHASE")

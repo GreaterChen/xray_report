@@ -89,7 +89,7 @@ def args_to_kwargs(
         return args
 
 
-def prepare_batch_data(batch, data_loader, device):
+def prepare_batch_data(args, batch, data_loader, device):
     """准备批次数据，对整个batch进行tokenization
 
     Args:
@@ -111,10 +111,18 @@ def prepare_batch_data(batch, data_loader, device):
         if field in batch:
             # 收集batch中的所有文本
             texts = batch[field]
+
+            if field == "history":
+                max_len = args.max_len_history
+            elif field == "findings":
+                max_len = args.max_len_findings
+            elif field == "impression":
+                max_len = args.max_len_impression
+
             # 对整个batch进行tokenization
             encoded = data_loader.dataset.tokenizer(
                 texts,
-                max_length=data_loader.dataset.max_len,
+                max_length=max_len,
                 padding="max_length",
                 truncation=True,
                 return_tensors="pt",
@@ -143,6 +151,7 @@ def prepare_batch_data(batch, data_loader, device):
 
 # ------ Core Functions ------
 def train(
+    args,
     data_loader,
     model,
     optimizer,
@@ -166,7 +175,7 @@ def train(
     prog_bar = tqdm(data_loader)
     for i, batch in enumerate(prog_bar):
         # 准备批次数据
-        source, target, _ = prepare_batch_data(batch, data_loader, device)
+        source, target, _ = prepare_batch_data(args, batch, data_loader, device)
 
         # 转换为kwargs格式
         source = args_to_kwargs(source, kw_src)
@@ -220,6 +229,7 @@ def train(
 
 
 def test(
+    args,
     data_loader,
     model,
     logger,
@@ -255,7 +265,7 @@ def test(
             impression_gts_list.extend([gt for gt in batch["gts"][1]])
 
             # 准备批次数据
-            source, target, _ = prepare_batch_data(batch, data_loader, device)
+            source, target, _ = prepare_batch_data(args, batch, data_loader, device)
 
             # 转换为kwargs格式
             source = args_to_kwargs(source, kw_src)

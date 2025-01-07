@@ -159,6 +159,64 @@ class BLIP_Decoder(nn.Module):
         return None, hidden_states, captions
 
 
+class ResNet101(nn.Module):
+    def __init__(self):
+        super(ResNet101, self).__init__()
+        model = getattr(models, "resnet101")(
+            weights=models.ResNet101_Weights.IMAGENET1K_V1
+        )
+        modules = list(model.children())[:-3]
+        self.model = nn.Sequential(*modules)
+
+        # 添加线性映射层，将1024维降到768维
+        self.dim_reduction = nn.Sequential(
+            nn.Linear(1024, 512),  # 降到中间的低维度
+            nn.ReLU(),  # 非线性激活
+            nn.Linear(512, 768),  # 再升到目标维度
+        )
+
+    def forward(self, x):
+        patch_feats = self.model(x)  # (batch_size, 1024, 14, 14)
+        batch_size, feat_size, _, _ = patch_feats.shape
+
+        # 重排并降维
+        patch_feats = patch_feats.reshape(batch_size, feat_size, -1).permute(
+            0, 2, 1
+        )  # (batch_size, 196, 1024)
+        patch_feats = self.dim_reduction(patch_feats)  # (batch_size, 196, 768)
+
+        return patch_feats
+
+
+class HistoryEncoder(nn.Module):
+    def __init__(self, args=None, bert_model_name="bert-base-uncased"):
+        super().__init__()
+        # 加载预训练BERT的embedding层
+        self.args = args
+        self.bert = BertModel.from_pretrained(bert_model_name, local_files_only=True)
+        self.bert.resize_token_embeddings(args.tokenizer_max_len)
+
+        self.embedding = self.bert.embeddings
+
+    def forward(self, encoded_history):
+        """
+        Args:
+            encoded_history: 包含input_ids, attention_mask等的字典
+                           来自tokenizer的输出
+        Returns:
+            tensor: shape (batch_size, seq_len, 768)
+        """
+        # 获取embeddings
+        embeddings = self.embedding(
+            input_ids=encoded_history.input_ids,
+            position_ids=None,
+            inputs_embeds=None,
+            past_key_values_length=0,
+        )
+
+        return embeddings
+
+
 class CXR_BERT_FeatureExtractor(nn.Module):
     def __init__(self, tokenizer, device="cuda"):
         super(CXR_BERT_FeatureExtractor, self).__init__()
@@ -206,55 +264,6 @@ class CXR_BERT_FeatureExtractor(nn.Module):
         return cls_embeddings, texts
 
 
-class SwinFeatureExtractor(nn.Module):
-    def __init__(
-        self,
-        image_encoder_name="swin_large_patch4_window7_224",
-        hidden_dim=768,
-        pretrained=True,
-    ):
-        super().__init__()
-        # 加载预训练的 Swin Transformer
-        self.image_encoder = create_model(
-            image_encoder_name, pretrained=True, features_only=True
-        )
-
-        # 映射到低维视觉特征 Fv
-        self.feature_proj = nn.Sequential(
-            nn.Conv2d(
-                self.image_encoder.feature_info[-1]["num_chs"],
-                hidden_dim,
-                kernel_size=1,
-            ),
-            nn.BatchNorm2d(hidden_dim),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((1, 1)),  # 提取全局特征
-        )
-
-    def forward(self, image):
-        """
-        image: 输入的图像，形状为 (B, C, H, W)
-        返回:
-        Fv: 视觉特征，形状为 (B, 196, 768)
-        """
-        # 提取图像的多层特征
-        features = self.image_encoder(image)
-
-        """
-        Swin Transformer 
-        最后一层输出形状 (B, 7, 7, 1536)
-        倒数第二层输出形状 (B, 14, 14, 768)
-
-        """
-
-        # 获取最后一层特征并调整维度顺序 (B, C, H, W)
-        features_last = features[-2].permute(0, 3, 1, 2)  # (2,768,14,14)
-        b, c, h, w = features_last.size()
-        fv = features_last.view(b, c, h * w).permute(0, 2, 1)
-
-        return fv
-
-
 class ViTFeatureExtractor(nn.Module):
     def __init__(self, model_name="vit_base_patch16_224", pretrained=True):
         super().__init__()
@@ -286,101 +295,49 @@ class ViTAdapter(nn.Module):
         return x
 
 
-class DiseaseFeatureProjector(nn.Module):
-    def __init__(self, input_dim=768, num_diseases=512, feature_dim=768):
-        """
-        Args:
-            input_dim: 输入视觉特征 x 的维度（Swin Transformer 输出的维度 C）。
-            num_diseases: 疾病数量 N_v。
-            feature_dim: 每种疾病的特征维度 C_v。
-        """
-        super().__init__()
-        self.num_diseases = num_diseases
-        self.feature_dim = feature_dim
-
-        # 定义可学习的 A_i 和 b_i
-        self.A = nn.Parameter(
-            torch.randn(num_diseases, input_dim, feature_dim)
-        )  # A 的形状 (N_v, C, C_v)
-        self.b = nn.Parameter(
-            torch.randn(num_diseases, feature_dim)
-        )  # b 的形状 (N_v, C_v)
-
-    def forward(self, x):
-        """
-        Args:
-            x: 输入的视觉特征，形状为 (B, C)。
-        Returns:
-            Fv: 疾病特征矩阵，形状为 (B, N_v, C_v)。
-        """
-        # 扩展 x 的维度以匹配 A 的形状
-        # x 的形状 (B, C)，A 的形状 (N_v, C, C_v)
-        # A @ x 结果形状为 (B, N_v, C_v)
-        F_v = torch.einsum("bc,ncf->bnf", x, self.A) + self.b  # (B, N_v, C_v)
-
-        # 对每个疾病的特征进行 softmax 归一化
-        F_v = torch.softmax(F_v, dim=-1)  # 对每个疾病的特征向量进行归一化
-        return F_v
-
-
 class ModalityFusion(nn.Module):
     def __init__(
-        self,
-        d_model=768,
-        input_dim=256 + 197,
-        nhead=8,
-        num_encoder_layers=6,
-        dropout=0.1,
+        self, hidden_size=768, num_heads=8, num_layers=2, mlp_ratio=4.0, dropout=0.1
     ):
         super().__init__()
 
-        # Transform layer parameters
-        self.d_model = d_model  # 特征维度
-        self.nhead = nhead  # 注意力头数
-
-        # Position encoding
-        self.pos_encoder = nn.Parameter(torch.randn(input_dim, d_model))
-
-        # Transformer encoder
+        # Transformer Encoder层
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=4 * d_model,
+            d_model=hidden_size,
+            nhead=num_heads,
+            dim_feedforward=int(hidden_size * mlp_ratio),
             dropout=dropout,
             batch_first=True,
-        )
-        self.transformer_encoder = nn.TransformerEncoder(
-            encoder_layer, num_layers=num_encoder_layers
+            norm_first=True,
         )
 
-        # Layer normalization
-        self.norm = nn.LayerNorm(d_model)
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer=encoder_layer,
+            num_layers=num_layers,
+            norm=nn.LayerNorm(hidden_size),
+        )
 
-    def forward(self, image_features, text_features):
+        # 模态类型嵌入
+        self.modality_embeddings = nn.Parameter(torch.randn(2, hidden_size))
+
+    def forward(self, visual_features, text_features):
         """
         Args:
-            image_features: shape (batch_size, 196, 768)
-            text_features: shape (batch_size, 256, 768)
-        Returns:
-            fused_features: shape (batch_size, 452, 768)
+            visual_features: [batch_size, 196, hidden_size] # 已经过MLP映射到768维
+            text_features: [batch_size, text_len, hidden_size]
         """
-        batch_size = image_features.size(0)
+        # 1. 直接添加模态类型嵌入
+        visual_modality = self.modality_embeddings[0].unsqueeze(0).unsqueeze(0)
+        text_modality = self.modality_embeddings[1].unsqueeze(0).unsqueeze(0)
 
-        # Concatenate features
-        fused_features = torch.cat(
-            [image_features, text_features], dim=1
-        )  # (batch_size, 452, 768)
+        visual_features = visual_features + visual_modality
+        text_features = text_features + text_modality
 
-        # Add positional encoding
-        fused_features = fused_features + self.pos_encoder.unsqueeze(0).expand(
-            batch_size, -1, -1
-        )
+        # 2. 特征拼接
+        concat_features = torch.cat([visual_features, text_features], dim=1)
 
-        # Apply transformer encoder
-        fused_features = self.transformer_encoder(fused_features)
-
-        # Apply layer normalization
-        fused_features = self.norm(fused_features)
+        # 3. Transformer融合
+        fused_features = self.transformer(concat_features)
 
         return fused_features
 
@@ -609,7 +566,7 @@ class HiMrGn(nn.Module):
     def __init__(
         self,
         image_encoder,
-        features_projector,
+        history_encoder,
         modality_fusion,
         findings_decoder,
         multi_label_classifier,
@@ -619,7 +576,7 @@ class HiMrGn(nn.Module):
     ):
         super().__init__()
         self.image_encoder = image_encoder
-        self.features_projector = features_projector
+        self.history_encoder = history_encoder
         self.modality_fusion = modality_fusion
         self.findings_decoder = findings_decoder
         self.co_attention_module = co_attention_module
@@ -639,8 +596,9 @@ class HiMrGn(nn.Module):
         if train_stage == 1:
             F_v = self.image_encoder(image)
 
-            # fusion_features = self.modality_fusion(F_v, history)
-            fusion_features = F_v
+            history = self.history_encoder(history)
+
+            fusion_features = self.modality_fusion(F_v, history)
 
             if mode == "train":
                 findings, _, findings_text, loss_lm = self.findings_decoder(
@@ -690,32 +648,3 @@ class HiMrGn(nn.Module):
                 "F_I": F_I,
                 "class_logits": class_logits,
             }
-
-
-class ResNet101(nn.Module):
-    def __init__(self):
-        super(ResNet101, self).__init__()
-        model = getattr(models, "resnet101")(
-            weights=models.ResNet101_Weights.IMAGENET1K_V1
-        )
-        modules = list(model.children())[:-3]
-        self.model = nn.Sequential(*modules)
-
-        # 添加线性映射层，将1024维降到768维
-        self.dim_reduction = nn.Sequential(
-            nn.Linear(1024, 512),  # 降到中间的低维度
-            nn.ReLU(),  # 非线性激活
-            nn.Linear(512, 768),  # 再升到目标维度
-        )
-
-    def forward(self, x):
-        patch_feats = self.model(x)  # (batch_size, 1024, 14, 14)
-        batch_size, feat_size, _, _ = patch_feats.shape
-
-        # 重排并降维
-        patch_feats = patch_feats.reshape(batch_size, feat_size, -1).permute(
-            0, 2, 1
-        )  # (batch_size, 196, 1024)
-        patch_feats = self.dim_reduction(patch_feats)  # (batch_size, 196, 768)
-
-        return patch_feats
