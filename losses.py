@@ -143,8 +143,7 @@ class CombinedLoss(nn.Module):
 
         # 综合损失
         total_loss = (
-            self.lambda_contrastive * contrastive_loss
-            + self.lambda_class * class_loss
+            self.lambda_contrastive * contrastive_loss + self.lambda_class * class_loss
         )
 
         # 返回总损失和各项损失

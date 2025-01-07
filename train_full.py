@@ -541,10 +541,14 @@ if __name__ == "__main__":
         # 加载模型权重
         _, _ = load(args.checkpoint_path_from, model, optimizer, scheduler)
         logger.info(f"从 {args.checkpoint_path_from} 加载模型权重")
-        
+
         # 设置损失函数
-        criterion = CombinedLoss(pad_id=pad_id).cuda() if train_stage == 2 else StageOneLoss(pad_id=pad_id).cuda()
-        
+        criterion = (
+            CombinedLoss(pad_id=pad_id).cuda()
+            if train_stage == 2
+            else StageOneLoss(pad_id=pad_id).cuda()
+        )
+
         # 在测试集上评估
         test_loss, test_metrics, test_results = test(
             args,
@@ -559,34 +563,38 @@ if __name__ == "__main__":
             kw_tgt=args.kw_tgt,
             kw_out=args.kw_out,
             return_results=True,
-            train_stage=train_stage
+            train_stage=train_stage,
         )
-        
+
         # 记录测试结果
         logger.info("测试结果:")
         logger.info(f"Test Loss: {test_loss:.4f}")
         for metric_name, metric_value in test_metrics.items():
             logger.info(f"Test {metric_name}: {metric_value:.4f}")
-        
+
         # 保存预测结果到文件
         results_dir = os.path.join(args.checkpoint_path_to, "test_results")
         os.makedirs(results_dir, exist_ok=True)
-        
+
         # 保存findings结果
         with open(os.path.join(results_dir, "findings_results.txt"), "w") as f:
-            for gt, pred in zip(test_results["findings_gts"], test_results["findings_preds"]):
+            for gt, pred in zip(
+                test_results["findings_gts"], test_results["findings_preds"]
+            ):
                 f.write(f"Ground Truth: {gt}\n")
                 f.write(f"Prediction: {pred}\n")
                 f.write("-" * 80 + "\n")
-        
+
         # 如果是第二阶段，还要保存impression结果
         if train_stage == 2:
             with open(os.path.join(results_dir, "impression_results.txt"), "w") as f:
-                for gt, pred in zip(test_results["impression_gts"], test_results["impression_preds"]):
+                for gt, pred in zip(
+                    test_results["impression_gts"], test_results["impression_preds"]
+                ):
                     f.write(f"Ground Truth: {gt}\n")
                     f.write(f"Prediction: {pred}\n")
                     f.write("-" * 80 + "\n")
-        
+
         logger.info(f"测试结果已保存到: {results_dir}")
 
     elif args.phase == "INFER":

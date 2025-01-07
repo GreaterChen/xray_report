@@ -245,11 +245,7 @@ class CXR_BERT_FeatureExtractor(nn.Module):
         """
         # 对输入文本进行编码
         inputs = self.tokenizer(
-            texts, 
-            max_length=512, 
-            padding=True, 
-            truncation=True, 
-            return_tensors="pt"
+            texts, max_length=512, padding=True, truncation=True, return_tensors="pt"
         ).to(self.device)
 
         with torch.no_grad():
@@ -554,9 +550,9 @@ class ImpressionGenerator(nn.Module):
         memory = torch.cat([F_v_prime, F_t_prime, F_t], dim=1)  # (B, N_v + 2*N_t, C)
 
         # 使用 BLIP_Decoder 进行生成
-        logits, _ , impression_text, loss_lm = self.text_decoder(memory, target_embed)
+        logits, _, impression_text, loss_lm = self.text_decoder(memory, target_embed)
 
-        return memory, logits, impression_text, loss_lm 
+        return memory, logits, impression_text, loss_lm
 
 
 class HiMrGn(nn.Module):
@@ -623,13 +619,11 @@ class HiMrGn(nn.Module):
                 fusion_features, findings
             )
 
-
             F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)
 
-            memory, impression_logits, impression_text, impression_loss = self.impression_decoder(
-                F_v_prime, F_t_prime, F_t, impression
+            memory, impression_logits, impression_text, impression_loss = (
+                self.impression_decoder(F_v_prime, F_t_prime, F_t, impression)
             )
-
 
             class_logits = self.multi_label_classifier(memory)
 
