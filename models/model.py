@@ -232,7 +232,20 @@ class ViTFeatureExtractor(nn.Module):
         features = self.image_encoder.forward_features(image)
         
         return features
-    
+
+class ViTAdapter(nn.Module):
+    def __init__(self, vit_dim=768, decoder_dim=768):
+        super().__init__()
+        self.linear = nn.Linear(vit_dim, decoder_dim)
+        self.layer_norm = nn.LayerNorm(decoder_dim)
+        
+    def forward(self, x):
+        # x shape: [batch_size, 197, vit_dim]
+        x = self.linear(x)
+        x = self.layer_norm(x)
+        return x
+
+
 class DiseaseFeatureProjector(nn.Module):
     def __init__(self, input_dim=768, num_diseases=512, feature_dim=768):
         """
