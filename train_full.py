@@ -167,12 +167,12 @@ def parse_args():
     parser.add_argument(
         "--phase",
         type=str,
-        default="TRAIN_STAGE_1",
+        default="TRAIN_STAGE_2",
         choices=["TRAIN_STAGE_1", "TRAIN_STAGE_2", "TEST", "INFER"],
         help="Phase of the program: TRAIN, TEST, or INFER.",
     )
     parser.add_argument(
-        "--train_batch_size", type=int, default=48, help="Batch size for training."
+        "--train_batch_size", type=int, default=2, help="Batch size for training."
     )
     parser.add_argument(
         "--val_batch_size", type=int, default=8, help="Batch size for validation."
@@ -211,7 +211,7 @@ def parse_args():
     parser.add_argument(
         "--checkpoint_path_from",
         type=str,
-        default=None,
+        default="/home/chenlb/xray_report_generation/results/new_data/stage_1/epoch_9_BLEU_1_0.43405933367863275.pth",
         help="Path to load the checkpoint from.",
     )
     parser.add_argument(
@@ -287,10 +287,6 @@ if __name__ == "__main__":
 
         resnet101 = ResNet101()
 
-        # swin_transformer = SwinFeatureExtractor(hidden_dim=768)
-        # vit_transformer = ViTFeatureExtractor(model_name='vit_base_patch16_224', pretrained=True)
-        # features_projector = DiseaseFeatureProjector(input_dim=768, num_diseases=256, feature_dim=768)
-
         history_encoder = HistoryEncoder(args)
 
         modality_fusion = ModalityFusion(hidden_size=768)
@@ -304,7 +300,7 @@ if __name__ == "__main__":
         impression_decoder = BLIP_Decoder(args, tokenizer=tokenizer)
         impression_generator = ImpressionGenerator(impression_decoder)
 
-        cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor(tokenizer=tokenizer)
+        cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor()
 
         model = HiMrGn(
             image_encoder=resnet101,
@@ -483,6 +479,9 @@ if __name__ == "__main__":
                 model,
                 optimizer,
                 criterion,
+                scheduler=scheduler,
+                num_epochs=args.epochs,
+                current_epoch=epoch,
                 device="cuda",
                 kw_src=args.kw_src,
                 kw_tgt=args.kw_tgt,
@@ -490,10 +489,12 @@ if __name__ == "__main__":
                 scaler=scaler,
                 train_stage=2,
             )
-            val_loss = test(
+            val_loss, val_met = test(
                 args,
                 val_loader,
                 model,
+                logger,
+                mode="val",
                 metric_ftns=metrics,
                 criterion=criterion,
                 device="cuda",
@@ -503,10 +504,12 @@ if __name__ == "__main__":
                 return_results=False,
                 train_stage=2,
             )
-            test_loss = test(
+            test_loss, test_met = test(
                 args,
                 test_loader,
                 model,
+                logger,
+                mode="test",
                 metric_ftns=metrics,
                 criterion=criterion,
                 device="cuda",
@@ -532,17 +535,59 @@ if __name__ == "__main__":
                 logger.info(f"Saved To: {args.checkpoint_path_to}")
 
     elif args.phase == "TEST":
-        # Output the file list for inspection
-        out_file_img = open(
-            "outputs/{}_{}_{}_{}_Img.txt".format(
-                args.dataset_name, args.model_name, args.backbone_name, comment
-            ),
-            "w",
+        # 确保提供了checkpoint路径
+        if not args.checkpoint_path_from:
+            raise ValueError("必须提供checkpoint路径用于测试!")
+        # 加载模型权重
+        _, _ = load(args.checkpoint_path_from, model, optimizer, scheduler)
+        logger.info(f"从 {args.checkpoint_path_from} 加载模型权重")
+        
+        # 设置损失函数
+        criterion = CombinedLoss(pad_id=pad_id).cuda() if train_stage == 2 else StageOneLoss(pad_id=pad_id).cuda()
+        
+        # 在测试集上评估
+        test_loss, test_metrics, test_results = test(
+            args,
+            test_loader,
+            model,
+            logger,
+            mode="test",
+            metric_ftns=metrics,
+            criterion=criterion,
+            device="cuda",
+            kw_src=args.kw_src,
+            kw_tgt=args.kw_tgt,
+            kw_out=args.kw_out,
+            return_results=True,
+            train_stage=train_stage
         )
-        for i in range(len(test_data.idx_pidsid)):
-            out_file_img.write(
-                test_data.idx_pidsid[i][0] + " " + test_data.idx_pidsid[i][1] + "\n"
-            )
+        
+        # 记录测试结果
+        logger.info("测试结果:")
+        logger.info(f"Test Loss: {test_loss:.4f}")
+        for metric_name, metric_value in test_metrics.items():
+            logger.info(f"Test {metric_name}: {metric_value:.4f}")
+        
+        # 保存预测结果到文件
+        results_dir = os.path.join(args.checkpoint_path_to, "test_results")
+        os.makedirs(results_dir, exist_ok=True)
+        
+        # 保存findings结果
+        with open(os.path.join(results_dir, "findings_results.txt"), "w") as f:
+            for gt, pred in zip(test_results["findings_gts"], test_results["findings_preds"]):
+                f.write(f"Ground Truth: {gt}\n")
+                f.write(f"Prediction: {pred}\n")
+                f.write("-" * 80 + "\n")
+        
+        # 如果是第二阶段，还要保存impression结果
+        if train_stage == 2:
+            with open(os.path.join(results_dir, "impression_results.txt"), "w") as f:
+                for gt, pred in zip(test_results["impression_gts"], test_results["impression_preds"]):
+                    f.write(f"Ground Truth: {gt}\n")
+                    f.write(f"Prediction: {pred}\n")
+                    f.write("-" * 80 + "\n")
+        
+        logger.info(f"测试结果已保存到: {results_dir}")
 
     elif args.phase == "INFER":
         # txt_test_outputs, txt_test_targets = infer(test_loader, model, device='cuda', threshold=0.25)

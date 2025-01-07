@@ -195,22 +195,16 @@ def train(
                 if train_stage == 1:
                     loss = output["loss_lm"]
                 else:
-                    loss, _ = criterion(output, target)
-                # loss, _ = criterion(output, target)
+                    loss, _ = criterion(output, target) 
+                    loss = loss + output["findings_loss"] + output["impression_loss"]
 
             running_loss += loss.item()
             prog_bar.set_description(f"Loss: {running_loss/(i+1)} | LR: {current_lr}")
 
-            loss.backward()
-            torch.nn.utils.clip_grad_value_(model.parameters(), 0.1)
-            optimizer.step()
             optimizer.zero_grad()
-
-            # optimizer.zero_grad()
-            # scaler.scale(loss).backward()
-            # scaler.step(optimizer)
-            # scaler.update()
-
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
         else:
             output = data_distributor(model, source)
             output = args_to_kwargs(output, kw_out)
@@ -219,11 +213,10 @@ def train(
             running_loss += loss.item()
             prog_bar.set_description("Loss: {}".format(running_loss / (i + 1)))
 
-            optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_value_(model.parameters(), 0.1)
             optimizer.step()
-            if scheduler != None:
-                scheduler.step()
+            optimizer.zero_grad()
 
     return running_loss / len(data_loader)
 
@@ -344,11 +337,11 @@ def load(path, model, optimizer=None, scheduler=None):
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         except:  # Input optimizer doesn't fit the checkpoint one --> should be ignored
             print("Cannot load the optimizer")
-    if scheduler != None:
-        try:
-            scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
-        except:  # Input scheduler doesn't fit the checkpoint one --> should be ignored
-            print("Cannot load the scheduler")
+    # if scheduler != None:
+    #     try:
+    #         scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+    #     except:  # Input scheduler doesn't fit the checkpoint one --> should be ignored
+    #         print("Cannot load the scheduler")
     return epoch, stats
 
 

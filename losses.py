@@ -57,54 +57,6 @@ class ContrastiveLearningLoss(nn.Module):
         return loss_sim
 
 
-class SequenceCrossEntropyLoss(nn.Module):
-    def __init__(self, pad_id=0):
-        """
-        计算生成序列的交叉熵损失。
-        Args:
-            pad_id: 填充值的索引，用于忽略填充标记的损失。
-        """
-        super(SequenceCrossEntropyLoss, self).__init__()
-        self.pad_id = pad_id
-
-    def forward(self, predictions, targets):
-        """
-        Args:
-            predictions: 模型输出的词汇分布概率，形状 (B, seq_len, vocab_size)。
-            targets: 目标序列，形状 (B, seq_len)。
-        Returns:
-            loss: 归一化的交叉熵损失 (标量)。
-        """
-        # 将预测的概率分布展平，适应交叉熵损失的输入
-        batch_size, seq_len, vocab_size = predictions.size()
-        predictions = predictions.view(-1, vocab_size)  # (B * seq_len, vocab_size)
-        targets = targets.input_ids.view(-1)  # (B * seq_len)
-
-        # 忽略填充标记的损失
-        loss = F.cross_entropy(
-            predictions, targets, ignore_index=self.pad_id, reduction="mean"
-        )
-        return loss
-
-
-class StageOneLoss(nn.Module):
-    def __init__(self, pad_id):
-        super(StageOneLoss, self).__init__()
-        self.cross_entropy_loss = SequenceCrossEntropyLoss(pad_id=pad_id)
-
-    def forward(self, output, targets):
-        findings = output["findings"]
-        findings_gt = targets["findings"]
-
-        findings_loss = self.cross_entropy_loss(findings, findings_gt)
-
-        losses = {
-            "findings_loss": findings_loss,
-        }
-
-        return findings_loss, losses
-
-
 class MultiLabelBCELoss(nn.Module):
     def __init__(self, num_classes=14, pos_weight=None):
         """
@@ -125,12 +77,6 @@ class MultiLabelBCELoss(nn.Module):
         Returns:
             loss: 归一化的二元交叉熵损失 (标量)
         """
-        # 确保输入形状正确
-        batch_size = predictions.size(0)
-        predictions = predictions.view(batch_size, self.num_classes)  # (B, num_classes)
-        targets = targets.view(batch_size, self.num_classes)  # (B, num_classes)
-
-        # 计算二元交叉熵损失
         loss = self.criterion(predictions, targets)
         return loss
 
@@ -159,7 +105,6 @@ class CombinedLoss(nn.Module):
             lambda_class: 多标签分类损失的权重因子。
         """
         super(CombinedLoss, self).__init__()
-        self.cross_entropy_loss = SequenceCrossEntropyLoss(pad_id=pad_id)
         self.contrastive_loss = ContrastiveLearningLoss(
             feature_dim=feature_dim,
             projection_dim=projection_dim,
@@ -173,39 +118,22 @@ class CombinedLoss(nn.Module):
         """
         Args:
             output: 模型输出，包含：
-                - findings: 模型生成的 findings 概率分布 (B, seq_len, vocab_size)。
-                - impression: 模型生成的 impression 概率分布 (B, seq_len, vocab_size)。
                 - F_F: Findings 的特征 (B, feature_dim)。
                 - F_I: Impression 的特征 (B, feature_dim)。
+                - class_logits: 14个疾病类别的概率分布 (B, 14)。
             targets: 目标值，包含：
-                - findings_gt: Findings 的目标序列 (B, seq_len)。
-                - impression_gt: Impression 的目标序列 (B, seq_len)。
                 - label_gt: 14个疾病类别的标签 (B, 14)。
 
         Returns:
             total_loss: 综合损失 (标量)。
             losses: 包含各项损失的字典。
         """
-        findings, impression, F_F, F_I, class_logits = (
-            output["findings"],
-            output["impression"],
+        F_F, F_I, class_logits = (
             output["F_F"],
             output["F_I"],
             output["class_logits"],
         )  # 解包 output
-        findings_gt, impression_gt, class_logits_gt = (
-            targets["findings"],
-            targets["impression"],
-            targets["label"],
-        )  # 解包 targets
-
-        # 计算交叉熵损失
-        findings_loss = self.cross_entropy_loss(
-            findings, findings_gt
-        )  # Findings 的交叉熵损失
-        impression_loss = self.cross_entropy_loss(
-            impression, impression_gt
-        )  # Impression 的交叉熵损失
+        class_logits_gt = targets["label"]  # 解包 targets
 
         # 计算分类损失
         class_loss = self.multi_label_loss(class_logits, class_logits_gt)
@@ -215,16 +143,12 @@ class CombinedLoss(nn.Module):
 
         # 综合损失
         total_loss = (
-            findings_loss
-            + impression_loss
-            + self.lambda_contrastive * contrastive_loss
+            self.lambda_contrastive * contrastive_loss
             + self.lambda_class * class_loss
         )
 
         # 返回总损失和各项损失
         losses = {
-            "findings_loss": findings_loss,
-            "impression_loss": impression_loss,
             "contrastive_loss": contrastive_loss,
             "class_loss": class_loss,
             "total_loss": total_loss,

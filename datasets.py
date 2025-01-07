@@ -120,11 +120,12 @@ class MIMIC(data.Dataset):  # MIMIC-CXR Dataset
         impression = self.my_pre_caption(info["impression"])
         findings = self.my_pre_caption(info["findings"])
         history = self.my_pre_caption(info["history"])
+        label = np.array(info["labels"], dtype=np.float32)
         output = {
             "findings": findings,
             "impression": impression,
             "history": history,
-            "label": info["labels"],
+            "label": label,
             "gts": [findings, impression],
         }
 

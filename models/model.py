@@ -218,42 +218,38 @@ class HistoryEncoder(nn.Module):
 
 
 class CXR_BERT_FeatureExtractor(nn.Module):
-    def __init__(self, tokenizer, device="cuda"):
+    def __init__(self, device="cuda"):
         super(CXR_BERT_FeatureExtractor, self).__init__()
         self.device = device
         # 加载预训练的 CXR-BERT 模型和对应的分词器
-        self.tokenizer = tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            "microsoft/BiomedVLP-CXR-BERT-specialized", trust_remote_code=True
+        )
         self.model = AutoModel.from_pretrained(
-            "bert-base-uncased", trust_remote_code=True
+            "microsoft/BiomedVLP-CXR-BERT-specialized", trust_remote_code=True
         ).to(self.device)
 
-        # Freeze all parameters in the BERT model (no training of these parameters)
+        # Freeze all parameters in the BERT model
         for param in self.model.parameters():
             param.requires_grad = False
 
         self.model.eval()  # 设置模型为评估模式
 
-    def forward(self, inputs):
+    def forward(self, texts):
         """
-        inputs: 输入的文本概率列表，形状为 (B, seq_len, vocab_size)
-        返回:
-        features: 文本特征张量，形状为 (B, hidden_size)
+        Args:
+            texts: List[str], batch_size个生成的文本字符串
+        Returns:
+            cls_embeddings: 文本特征张量，形状为 (B, hidden_size)
+            texts: 输入的文本列表
         """
-        # 从概率分布中选择每个位置最大概率的 token ID
-        # 通过 torch.argmax 获取每个序列位置最可能的 token
-        token_ids = torch.argmax(
-            inputs, dim=-1
-        )  # 选择每个位置最大概率的 token ID，形状为 (B, seq_len)
-
-        # 使用 tokenizer 对 token IDs 进行解码
-        texts = [
-            self.tokenizer.decode(token_id, skip_special_tokens=True)
-            for token_id in token_ids
-        ]
-
         # 对输入文本进行编码
         inputs = self.tokenizer(
-            texts, max_length=512, padding=True, truncation=True, return_tensors="pt"
+            texts, 
+            max_length=512, 
+            padding=True, 
+            truncation=True, 
+            return_tensors="pt"
         ).to(self.device)
 
         with torch.no_grad():
@@ -261,7 +257,7 @@ class CXR_BERT_FeatureExtractor(nn.Module):
             # 获取 [CLS] 标记的嵌入表示
             cls_embeddings = outputs.last_hidden_state[:, 0, :]
 
-        return cls_embeddings, texts
+        return cls_embeddings
 
 
 class ViTFeatureExtractor(nn.Module):
@@ -358,14 +354,15 @@ class FindingsGenerator(nn.Module):
             F_v: 输入的视觉特征，形状 (B, N_v, C_v)
             target_embed: 目标文本的token ids，形状 (B, max_len)
         Returns:
-            output: 生成的词汇分布，形状 (B, max_len, vocab_size)
+            logits: 生成的词汇分布，形状 (B, max_len, vocab_size)
             F_t: 解码器的隐藏状态，形状 (B, max_len, hidden_dim)
             findings_text: 生成的文本列表
+            loss_lm: 损失值
         """
         # 使用 BLIP_Decoder 进行生成
-        output, F_t, findings_text, loss_lm = self.text_decoder(F_v, target_embed)
+        logits, F_t, findings_text, loss_lm = self.text_decoder(F_v, target_embed)
 
-        return output, F_t, findings_text, loss_lm
+        return logits, F_t, findings_text, loss_lm
 
 
 class CoAttentionBlock(nn.Module):
@@ -557,9 +554,9 @@ class ImpressionGenerator(nn.Module):
         memory = torch.cat([F_v_prime, F_t_prime, F_t], dim=1)  # (B, N_v + 2*N_t, C)
 
         # 使用 BLIP_Decoder 进行生成
-        output, _, _ = self.text_decoder(memory, target_embed)
+        logits, _ , impression_text, loss_lm = self.text_decoder(memory, target_embed)
 
-        return memory, output
+        return memory, logits, impression_text, loss_lm 
 
 
 class HiMrGn(nn.Module):
@@ -600,20 +597,15 @@ class HiMrGn(nn.Module):
 
             fusion_features = self.modality_fusion(F_v, history)
 
-            if mode == "train":
-                findings, _, findings_text, loss_lm = self.findings_decoder(
-                    fusion_features, findings
-                )
-            else:
-                _, _, findings_text, loss_lm = self.findings_decoder(
-                    fusion_features, None
-                )
+            logits, F_t, findings_text, loss_lm = self.findings_decoder(
+                fusion_features, findings
+            )
 
             return {
-                "findings": findings,
+                "findings_logits": logits,
                 "findings_text": findings_text,
                 "loss_lm": loss_lm,
-                "impression": None,
+                "impression_logits": None,
                 "impression_text": None,
                 "F_F": None,
                 "F_I": None,
@@ -621,29 +613,37 @@ class HiMrGn(nn.Module):
             }
 
         elif train_stage == 2:
-            x = self.image_encoder(image[0])  # (B, C)
-            F_v = x
+            F_v = self.image_encoder(image)  # (B, C)
+
+            history = self.history_encoder(history)
 
             fusion_features = self.modality_fusion(F_v, history)
 
-            findings, F_t = self.findings_decoder(fusion_features, findings)
+            findings_logits, F_t, findings_text, findings_loss = self.findings_decoder(
+                fusion_features, findings
+            )
+
 
             F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)
 
-            memory, impression = self.impression_decoder(
+            memory, impression_logits, impression_text, impression_loss = self.impression_decoder(
                 F_v_prime, F_t_prime, F_t, impression
             )
 
+
             class_logits = self.multi_label_classifier(memory)
 
-            F_F, findings_text = self.cxr_bert_feature_extractor(findings)
-            F_I, impression_text = self.cxr_bert_feature_extractor(impression)
+            F_F = self.cxr_bert_feature_extractor(findings_text)
+            F_I = self.cxr_bert_feature_extractor(impression_text)
 
             return {
-                "findings": findings,
+                "findings_logits": findings_logits,
                 "findings_text": findings_text,
-                "impression": impression,
+                "impression_logits": impression_logits,
                 "impression_text": impression_text,
+                "loss_lm": findings_loss + impression_loss,
+                "findings_loss": findings_loss,
+                "impression_loss": impression_loss,
                 "F_F": F_F,
                 "F_I": F_I,
                 "class_logits": class_logits,

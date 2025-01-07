@@ -1,0 +1,14 @@
+matplotlib==3.7.2
+numpy==1.25.0
+pandas==2.0.3
+Pillow==10.0.1
+Pillow==11.1.0
+scikit_learn==1.4.1.post1
+sentencepiece==0.2.0
+spacy==3.8.3
+timm==1.0.12
+tokenizer==3.4.5
+torch==2.1.0
+torchvision==0.16.0
+tqdm==4.65.2
+transformers==4.40.1
