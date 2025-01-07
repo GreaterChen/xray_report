@@ -3,6 +3,7 @@ from pycocoevalcap.meteor import Meteor
 from pycocoevalcap.rouge import Rouge
 from pycocoevalcap.cider import Cider
 
+
 def compute_scores(gts, res):
     """
     Performs the MS COCO evaluation using the Python 3 implementation (https://github.com/salaniz/pycocoevalcap)
@@ -14,14 +15,14 @@ def compute_scores(gts, res):
 
     # post-processing, make format consistent
     for k in res.keys():
-        res[k][0] = (res[k][0]+' ').replace('. ', ' . ').replace(' - ', '-')
+        res[k][0] = (res[k][0] + " ").replace(". ", " . ").replace(" - ", "-")
 
     # Set up scorers
     scorers = [
         (Bleu(4), ["BLEU_1", "BLEU_2", "BLEU_3", "BLEU_4"]),
         (Meteor(), "METEOR"),
         (Rouge(), "ROUGE_L"),
-        (Cider(), "CIDEr")
+        (Cider(), "CIDEr"),
     ]
     eval_res = {}
     # Compute score for each metric

@@ -7,6 +7,7 @@
 
 import math
 
+
 class LinearWarmupStepLRScheduler:
     def __init__(
         self,
@@ -48,6 +49,7 @@ class LinearWarmupStepLRScheduler:
                 decay_rate=self.decay_rate,
             )
 
+
 class LinearWarmupCosineLRScheduler:
     def __init__(
         self,
@@ -70,7 +72,7 @@ class LinearWarmupCosineLRScheduler:
 
     def step(self, cur_epoch, cur_step):
         # assuming the warmup iters less than one epoch
-        #if cur_epoch == 0:
+        # if cur_epoch == 0:
         if cur_epoch == 1:
             warmup_lr_schedule(
                 step=cur_step,

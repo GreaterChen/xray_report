@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class ContrastiveLearningLoss(nn.Module):
     def __init__(self, feature_dim=768, projection_dim=128, hidden_dim=256):
         """
@@ -16,13 +17,13 @@ class ContrastiveLearningLoss(nn.Module):
         self.projection_mlp = nn.Sequential(
             nn.Linear(feature_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, projection_dim)
+            nn.Linear(hidden_dim, projection_dim),
         )
         # Prediction MLP
         self.prediction_mlp = nn.Sequential(
             nn.Linear(projection_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, projection_dim)
+            nn.Linear(hidden_dim, projection_dim),
         )
 
     def forward(self, F_F, F_I):
@@ -48,11 +49,13 @@ class ContrastiveLearningLoss(nn.Module):
         P_I = F.normalize(P_I, dim=-1)
 
         # Step 4: Cosine Similarity Loss
-        loss_sim = (- F.cosine_similarity(P_F, Z_I.detach(), dim=-1).mean() \
-            		- F.cosine_similarity(P_I, Z_F.detach(), dim=-1).mean()) / 2
+        loss_sim = (
+            -F.cosine_similarity(P_F, Z_I.detach(), dim=-1).mean()
+            - F.cosine_similarity(P_I, Z_F.detach(), dim=-1).mean()
+        ) / 2
 
         return loss_sim
-	
+
 
 class SequenceCrossEntropyLoss(nn.Module):
     def __init__(self, pad_id=0):
@@ -78,17 +81,20 @@ class SequenceCrossEntropyLoss(nn.Module):
         targets = targets.input_ids.view(-1)  # (B * seq_len)
 
         # 忽略填充标记的损失
-        loss = F.cross_entropy(predictions, targets, ignore_index=self.pad_id, reduction="mean")
+        loss = F.cross_entropy(
+            predictions, targets, ignore_index=self.pad_id, reduction="mean"
+        )
         return loss
-    
+
+
 class StageOneLoss(nn.Module):
     def __init__(self, pad_id):
         super(StageOneLoss, self).__init__()
         self.cross_entropy_loss = SequenceCrossEntropyLoss(pad_id=pad_id)
 
     def forward(self, output, targets):
-        findings = output['findings']
-        findings_gt = targets['findings']
+        findings = output["findings"]
+        findings_gt = targets["findings"]
 
         findings_loss = self.cross_entropy_loss(findings, findings_gt)
 
@@ -97,7 +103,8 @@ class StageOneLoss(nn.Module):
         }
 
         return findings_loss, losses
-    
+
+
 class MultiLabelBCELoss(nn.Module):
     def __init__(self, num_classes=14, pos_weight=None):
         """
@@ -108,7 +115,7 @@ class MultiLabelBCELoss(nn.Module):
         """
         super(MultiLabelBCELoss, self).__init__()
         self.num_classes = num_classes
-        self.criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='mean')
+        self.criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction="mean")
 
     def forward(self, predictions, targets):
         """
@@ -122,13 +129,22 @@ class MultiLabelBCELoss(nn.Module):
         batch_size = predictions.size(0)
         predictions = predictions.view(batch_size, self.num_classes)  # (B, num_classes)
         targets = targets.view(batch_size, self.num_classes)  # (B, num_classes)
-        
+
         # 计算二元交叉熵损失
         loss = self.criterion(predictions, targets)
         return loss
 
+
 class CombinedLoss(nn.Module):
-    def __init__(self, pad_id=0, feature_dim=768, projection_dim=128, hidden_dim=256, lambda_contrastive=1.0, lambda_class=1.0):
+    def __init__(
+        self,
+        pad_id=0,
+        feature_dim=768,
+        projection_dim=128,
+        hidden_dim=256,
+        lambda_contrastive=1.0,
+        lambda_class=1.0,
+    ):
         """
         综合损失函数，包括：
         1. Findings 和 Impression 的交叉熵损失。
@@ -144,12 +160,15 @@ class CombinedLoss(nn.Module):
         """
         super(CombinedLoss, self).__init__()
         self.cross_entropy_loss = SequenceCrossEntropyLoss(pad_id=pad_id)
-        self.contrastive_loss = ContrastiveLearningLoss(feature_dim=feature_dim, 
-                                                        projection_dim=projection_dim, 
-                                                        hidden_dim=hidden_dim)
+        self.contrastive_loss = ContrastiveLearningLoss(
+            feature_dim=feature_dim,
+            projection_dim=projection_dim,
+            hidden_dim=hidden_dim,
+        )
         self.multi_label_loss = MultiLabelBCELoss()
         self.lambda_contrastive = lambda_contrastive
         self.lambda_class = lambda_class
+
     def forward(self, output, targets):
         """
         Args:
@@ -162,17 +181,31 @@ class CombinedLoss(nn.Module):
                 - findings_gt: Findings 的目标序列 (B, seq_len)。
                 - impression_gt: Impression 的目标序列 (B, seq_len)。
                 - label_gt: 14个疾病类别的标签 (B, 14)。
-        
+
         Returns:
             total_loss: 综合损失 (标量)。
             losses: 包含各项损失的字典。
         """
-        findings, impression, F_F, F_I, class_logits = output['findings'], output['impression'], output['F_F'], output['F_I'], output['class_logits']  # 解包 output
-        findings_gt, impression_gt, class_logits_gt = targets['findings'], targets['impression'], targets['label']  # 解包 targets
+        findings, impression, F_F, F_I, class_logits = (
+            output["findings"],
+            output["impression"],
+            output["F_F"],
+            output["F_I"],
+            output["class_logits"],
+        )  # 解包 output
+        findings_gt, impression_gt, class_logits_gt = (
+            targets["findings"],
+            targets["impression"],
+            targets["label"],
+        )  # 解包 targets
 
         # 计算交叉熵损失
-        findings_loss = self.cross_entropy_loss(findings, findings_gt)  # Findings 的交叉熵损失
-        impression_loss = self.cross_entropy_loss(impression, impression_gt)  # Impression 的交叉熵损失
+        findings_loss = self.cross_entropy_loss(
+            findings, findings_gt
+        )  # Findings 的交叉熵损失
+        impression_loss = self.cross_entropy_loss(
+            impression, impression_gt
+        )  # Impression 的交叉熵损失
 
         # 计算分类损失
         class_loss = self.multi_label_loss(class_logits, class_logits_gt)
@@ -181,7 +214,12 @@ class CombinedLoss(nn.Module):
         contrastive_loss = self.contrastive_loss(F_F, F_I)
 
         # 综合损失
-        total_loss = findings_loss + impression_loss + self.lambda_contrastive * contrastive_loss + self.lambda_class * class_loss
+        total_loss = (
+            findings_loss
+            + impression_loss
+            + self.lambda_contrastive * contrastive_loss
+            + self.lambda_class * class_loss
+        )
 
         # 返回总损失和各项损失
         losses = {
@@ -189,6 +227,6 @@ class CombinedLoss(nn.Module):
             "impression_loss": impression_loss,
             "contrastive_loss": contrastive_loss,
             "class_loss": class_loss,
-            "total_loss": total_loss
+            "total_loss": total_loss,
         }
         return total_loss, losses
