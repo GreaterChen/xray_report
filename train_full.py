@@ -96,7 +96,7 @@ def parse_args():
     parser.add_argument(
         "--max_len_findings",
         type=int,
-        default=196,
+        default=197,
         help="Maximum length of the input text.",
     )
     parser.add_argument(
@@ -211,13 +211,13 @@ def parse_args():
     parser.add_argument(
         "--checkpoint_path_from",
         type=str,
-        default="/home/chenlb/xray_report_generation/results/new_data/stage_1/epoch_9_BLEU_1_0.43405933367863275.pth",
+        default="/home/chenlb/xray_report_generation/results/vit_no_history/epoch_4_BLEU_1_0.2965976331358753.pth",
         help="Path to load the checkpoint from.",
     )
     parser.add_argument(
         "--checkpoint_path_to",
         type=str,
-        default="/home/chenlb/xray_report_generation/results/new_data/stage_1",
+        default="/home/chenlb/xray_report_generation/results/vit_no_history/stage2",
         help="Path to save the checkpoint to.",
     )
 
@@ -244,9 +244,13 @@ if __name__ == "__main__":
         pad_id = tokenizer.pad_token_id
 
         # 设置训练阶段和调试模式
-        train_stage = 1 if args.phase == "TRAIN_STAGE_1" else 2
+        train_stage = (
+            1
+            if args.phase == "TRAIN_STAGE_1"
+            else 2 if args.phase == "TRAIN_STAGE_2" else 3
+        )
 
-        MIMIC.load_shared_data(args.data_dir)
+        MIMIC.load_shared_data(args.data_dir, train_stage)
         # 创建训练、验证和测试数据集
         train_data = MIMIC(
             args.data_dir,
@@ -286,6 +290,7 @@ if __name__ == "__main__":
     if args.model_name == "HiMrGn":
 
         resnet101 = ResNet101()
+        vit = ViTFeatureExtractor(model_name="vit_base_patch16_224", pretrained=True)
 
         history_encoder = HistoryEncoder(args)
 
@@ -303,7 +308,7 @@ if __name__ == "__main__":
         cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor()
 
         model = HiMrGn(
-            image_encoder=resnet101,
+            image_encoder=vit,
             history_encoder=history_encoder,
             modality_fusion=modality_fusion,
             findings_decoder=findings_generator,
@@ -395,7 +400,7 @@ if __name__ == "__main__":
 
     # Training phase
     if args.phase == "TRAIN_STAGE_1":
-        criterion = StageOneLoss(pad_id=pad_id).cuda()
+        criterion = None
         scaler = torch.cuda.amp.GradScaler()
 
         for epoch in range(last_epoch + 1, args.epochs):
@@ -416,7 +421,7 @@ if __name__ == "__main__":
                 scaler=scaler,
                 train_stage=1,
             )
-            val_loss, val_met = test(
+            val_loss, val_met, _ = test(
                 args,
                 val_loader,
                 model,
@@ -431,7 +436,7 @@ if __name__ == "__main__":
                 return_results=False,
                 train_stage=1,
             )
-            test_loss, test_met = test(
+            test_loss, test_met, _ = test(
                 args,
                 test_loader,
                 model,
@@ -455,7 +460,8 @@ if __name__ == "__main__":
                 logger.info(f"test_{k}: {v}")
 
             save_path = os.path.join(
-                args.checkpoint_path_to, f'epoch_{epoch}_BLEU_1_{val_met["BLEU_1"]}.pth'
+                args.checkpoint_path_to,
+                f'epoch_{epoch}_BLEU_1_{test_met["BLEU_1"]}.pth',
             )
             save(
                 save_path,
@@ -468,6 +474,27 @@ if __name__ == "__main__":
             logger.info(f"Saved To: {save_path}")
 
     elif args.phase == "TRAIN_STAGE_2":
+
+        _, _ = load(args.checkpoint_path_from, model, optimizer, scheduler)
+        logger.info(f"从 {args.checkpoint_path_from} 加载模型权重")
+
+        # 冻结指定模块的参数
+        for param in model.image_encoder.parameters():
+            param.requires_grad = False
+
+        for param in model.history_encoder.parameters():
+            param.requires_grad = False
+
+        for param in model.modality_fusion.parameters():
+            param.requires_grad = False
+
+        for param in model.findings_decoder.parameters():
+            param.requires_grad = False
+
+        logger.info(
+            "已冻结 image_encoder, history_encoder, modality_fusion, findings_decoder 的参数"
+        )
+
         criterion = CombinedLoss(pad_id=pad_id).cuda()
         scaler = torch.cuda.amp.GradScaler()
 
@@ -489,7 +516,7 @@ if __name__ == "__main__":
                 scaler=scaler,
                 train_stage=2,
             )
-            val_loss, val_met = test(
+            val_loss, val_findings_met, val_impression_met = test(
                 args,
                 val_loader,
                 model,
@@ -504,7 +531,7 @@ if __name__ == "__main__":
                 return_results=False,
                 train_stage=2,
             )
-            test_loss, test_met = test(
+            test_loss, test_findings_met, test_impression_met = test(
                 args,
                 test_loader,
                 model,
@@ -520,19 +547,21 @@ if __name__ == "__main__":
                 train_stage=2,
             )
 
-            scheduler.step()
-            if best_metric > val_loss:  # TODO 修改评测指标
-                best_metric = val_loss
-                save(
-                    args.checkpoint_path_to,
-                    model,
-                    optimizer,
-                    scheduler,
-                    epoch,
-                    (val_loss, test_loss),
-                )
-                logger.info(f"New Best Metric: {best_metric}")
-                logger.info(f"Saved To: {args.checkpoint_path_to}")
+            save_path = os.path.join(
+                args.checkpoint_path_to,
+                f'epoch_{epoch}_BLEU_1_{test_findings_met["BLEU_1"]}.pth',
+            )
+
+            save(
+                save_path,
+                model,
+                optimizer,
+                scheduler,
+                epoch,
+                (val_loss, test_loss, val_findings_met, val_impression_met),
+            )
+
+            logger.info(f"Saved To: {save_path}")
 
     elif args.phase == "TEST":
         # 确保提供了checkpoint路径
@@ -543,11 +572,7 @@ if __name__ == "__main__":
         logger.info(f"从 {args.checkpoint_path_from} 加载模型权重")
 
         # 设置损失函数
-        criterion = (
-            CombinedLoss(pad_id=pad_id).cuda()
-            if train_stage == 2
-            else StageOneLoss(pad_id=pad_id).cuda()
-        )
+        criterion = CombinedLoss(pad_id=pad_id).cuda() if train_stage == 2 else None
 
         # 在测试集上评估
         test_loss, test_metrics, test_results = test(

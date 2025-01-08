@@ -277,6 +277,7 @@ def test(
 
             # 记录日志
             logger.info(f"findings_preds: {output['findings_text'][0]}")
+            logger.info(f"impression_preds: {output['impression_text'][0]}")
 
             # 计算损失
             if criterion is not None:
@@ -289,6 +290,10 @@ def test(
         findings_met = metric_ftns(
             {i: [gt] for i, gt in enumerate(findings_gts_list)},
             {i: [re] for i, re in enumerate(findings_preds_list)},
+        )
+        impression_met = metric_ftns(
+            {i: [gt] for i, gt in enumerate(impression_gts_list)},
+            {i: [re] for i, re in enumerate(impression_preds_list)},
         )
 
         # 如果需要返回结果
@@ -303,7 +308,7 @@ def test(
             }
             return running_loss / len(data_loader), findings_met, results
 
-    return running_loss / len(data_loader), findings_met
+    return running_loss / len(data_loader), findings_met, impression_met
 
 
 def save(path, model, optimizer=None, scheduler=None, epoch=-1, stats=None):

@@ -589,9 +589,10 @@ class HiMrGn(nn.Module):
         if train_stage == 1:
             F_v = self.image_encoder(image)
 
-            history = self.history_encoder(history)
+            # history = self.history_encoder(history)
 
-            fusion_features = self.modality_fusion(F_v, history)
+            # fusion_features = self.modality_fusion(F_v, history)
+            fusion_features = F_v
 
             logits, F_t, findings_text, loss_lm = self.findings_decoder(
                 fusion_features, findings
