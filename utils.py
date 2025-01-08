@@ -277,7 +277,9 @@ def test(
 
             # 记录日志
             logger.info(f"findings_preds: {output['findings_text'][0]}")
-            logger.info(f"impression_preds: {output['impression_text'][0]}")
+
+            if train_stage == 2:
+                logger.info(f"impression_preds: {output['impression_text'][0]}")
 
             # 计算损失
             if criterion is not None:

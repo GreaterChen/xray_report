@@ -58,12 +58,24 @@ class BLIP_Decoder(nn.Module):
             decoded_texts: 生成的文本列表
         """
         if text is not None:
-            decoder_targets = text.input_ids.masked_fill(
-                text.input_ids == self.tokenizer.pad_token_id, -100
+            # 输入保持不变: [CLS, A, B, C, SEP, PAD]
+            decoder_inputs = text.input_ids
+            
+            # mask掉PAD位置
+            decoder_targets = decoder_inputs.masked_fill(
+                decoder_inputs == self.tokenizer.pad_token_id,
+                -100
             )
+
+            # mask掉CLS位置
+            decoder_targets = decoder_inputs.masked_fill(
+                decoder_inputs == self.tokenizer.bos_token_id,
+                -100
+            )
+
             # 前向传播
             outputs = self.text_decoder(
-                input_ids=text.input_ids,
+                input_ids=decoder_inputs,
                 attention_mask=text.attention_mask,
                 encoder_hidden_states=encoder_hidden_states,
                 labels=decoder_targets,
@@ -110,9 +122,6 @@ class BLIP_Decoder(nn.Module):
         model_kwargs = {
             "encoder_hidden_states": image_embeds,
             "encoder_attention_mask": image_atts,
-            # "output_hidden_states": True,  # 添加这个参数以获取隐藏状态
-            # "return_dict_in_generate": True,  # 确保返回字典格式
-            # "output_scores": True,  # 获取生成的分数
         }
 
         # 初始化输入
@@ -137,7 +146,6 @@ class BLIP_Decoder(nn.Module):
         # generated_tokens = outputs.sequences  # (batch_size, seq_len)
         generated_tokens = outputs
 
-        # 由于beam search生成不会返回hidden states，我们需要手动计算
         # 使用forward pass获取hidden states
         attention_mask = (generated_tokens != self.tokenizer.pad_token_id).long()
         decoder_outputs = self.text_decoder(
@@ -612,10 +620,10 @@ class HiMrGn(nn.Module):
         elif train_stage == 2:
             F_v = self.image_encoder(image)  # (B, C)
 
-            history = self.history_encoder(history)
+            # history = self.history_encoder(history)
 
-            fusion_features = self.modality_fusion(F_v, history)
-
+            # fusion_features = self.modality_fusion(F_v, history)
+            fusion_features = F_v
             findings_logits, F_t, findings_text, findings_loss = self.findings_decoder(
                 fusion_features, findings
             )

@@ -96,13 +96,13 @@ def parse_args():
     parser.add_argument(
         "--max_len_findings",
         type=int,
-        default=197,
+        default=196,
         help="Maximum length of the input text.",
     )
     parser.add_argument(
         "--max_len_impression",
         type=int,
-        default=196,
+        default=100,
         help="Maximum length of the input text.",
     )
     parser.add_argument(
@@ -167,12 +167,12 @@ def parse_args():
     parser.add_argument(
         "--phase",
         type=str,
-        default="TRAIN_STAGE_2",
+        default="TRAIN_STAGE_1",
         choices=["TRAIN_STAGE_1", "TRAIN_STAGE_2", "TEST", "INFER"],
         help="Phase of the program: TRAIN, TEST, or INFER.",
     )
     parser.add_argument(
-        "--train_batch_size", type=int, default=2, help="Batch size for training."
+        "--train_batch_size", type=int, default=48, help="Batch size for training."
     )
     parser.add_argument(
         "--val_batch_size", type=int, default=8, help="Batch size for validation."
@@ -181,7 +181,7 @@ def parse_args():
         "--num_workers", type=int, default=4, help="Number of workers for training."
     )
     parser.add_argument(
-        "--epochs", type=int, default=10, help="Number of epochs for training."
+        "--epochs", type=int, default=20, help="Number of epochs for training."
     )
     parser.add_argument("--lr", type=float, default=5e-5, help="Learning rate.")
     parser.add_argument(
@@ -217,7 +217,7 @@ def parse_args():
     parser.add_argument(
         "--checkpoint_path_to",
         type=str,
-        default="/home/chenlb/xray_report_generation/results/vit_no_history/stage2",
+        default="/home/chenlb/xray_report_generation/results/resnet_no_history/fix",
         help="Path to save the checkpoint to.",
     )
 
@@ -308,7 +308,7 @@ if __name__ == "__main__":
         cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor()
 
         model = HiMrGn(
-            image_encoder=vit,
+            image_encoder=resnet101,
             history_encoder=history_encoder,
             modality_fusion=modality_fusion,
             findings_decoder=findings_generator,
@@ -453,9 +453,6 @@ if __name__ == "__main__":
             )
 
             logger.info(f"epoch: {epoch}")
-            for k, v in val_met.items():
-                logger.info(f"val_{k}: {v}")
-
             for k, v in test_met.items():
                 logger.info(f"test_{k}: {v}")
 
@@ -546,6 +543,13 @@ if __name__ == "__main__":
                 return_results=False,
                 train_stage=2,
             )
+
+            logger.info(f"epoch: {epoch}")
+            for k, v in test_findings_met.items():
+                logger.info(f"val_{k}: {v}")
+
+            for k, v in test_impression_met.items():
+                logger.info(f"test_{k}: {v}")
 
             save_path = os.path.join(
                 args.checkpoint_path_to,
