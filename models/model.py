@@ -60,17 +60,15 @@ class BLIP_Decoder(nn.Module):
         if text is not None:
             # 输入保持不变: [CLS, A, B, C, SEP, PAD]
             decoder_inputs = text.input_ids
-            
+
             # mask掉PAD位置
             decoder_targets = decoder_inputs.masked_fill(
-                decoder_inputs == self.tokenizer.pad_token_id,
-                -100
+                decoder_inputs == self.tokenizer.pad_token_id, -100
             )
 
             # mask掉CLS位置
             decoder_targets = decoder_inputs.masked_fill(
-                decoder_inputs == self.tokenizer.bos_token_id,
-                -100
+                decoder_inputs == self.tokenizer.bos_token_id, -100
             )
 
             # 前向传播
