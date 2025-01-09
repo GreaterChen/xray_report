@@ -69,7 +69,7 @@ class MIMIC(data.Dataset):  # MIMIC-CXR Dataset
                     item for item in data_split if item["impression"].strip() != ""
                 ]
             cls._shared_data["annotation"] = filtered_annotation
-        elif stage == 3:
+        elif stage == 3:  # todo
             raise NotImplementedError("Stage 3 is not implemented")
 
         cls._shared_data["loaded"] = True

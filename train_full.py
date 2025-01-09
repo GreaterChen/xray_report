@@ -169,8 +169,18 @@ def parse_args():
         type=str,
         default="TRAIN_STAGE_1",
         choices=["TRAIN_STAGE_1", "TRAIN_STAGE_2", "TEST", "INFER"],
-        help="Phase of the program: TRAIN, TEST, or INFER.",
+        help="Phase of the program",
     )
+
+    # TRAIN OR TEST
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="TEST",
+        choices=["TRAIN", "TEST"],
+        help="Train or Test",
+    )
+
     parser.add_argument(
         "--train_batch_size", type=int, default=48, help="Batch size for training."
     )
@@ -211,7 +221,7 @@ def parse_args():
     parser.add_argument(
         "--checkpoint_path_from",
         type=str,
-        default="/home/chenlb/xray_report_generation/results/vit_no_history/epoch_4_BLEU_1_0.2965976331358753.pth",
+        default="/home/chenlb/xray_report_generation/results/resnet_no_history/fix/epoch_5_BLEU_1_0.6698646953408688.pth",
         help="Path to load the checkpoint from.",
     )
     parser.add_argument(
@@ -399,7 +409,7 @@ if __name__ == "__main__":
     metrics = compute_scores
 
     # Training phase
-    if args.phase == "TRAIN_STAGE_1":
+    if args.phase == "TRAIN_STAGE_1" and args.mode == "TRAIN":
         criterion = None
         scaler = torch.cuda.amp.GradScaler()
 
@@ -421,22 +431,22 @@ if __name__ == "__main__":
                 scaler=scaler,
                 train_stage=1,
             )
-            val_loss, val_met, _ = test(
-                args,
-                val_loader,
-                model,
-                logger,
-                mode="val",
-                metric_ftns=metrics,
-                criterion=criterion,
-                device="cuda",
-                kw_src=args.kw_src,
-                kw_tgt=args.kw_tgt,
-                kw_out=args.kw_out,
-                return_results=False,
-                train_stage=1,
-            )
-            test_loss, test_met, _ = test(
+            # val_loss, val_result = test(
+            #     args,
+            #     val_loader,
+            #     model,
+            #     logger,
+            #     mode="val",
+            #     metric_ftns=metrics,
+            #     criterion=criterion,
+            #     device="cuda",
+            #     kw_src=args.kw_src,
+            #     kw_tgt=args.kw_tgt,
+            #     kw_out=args.kw_out,
+            #     return_results=False,
+            #     train_stage=1,
+            # )
+            test_loss, test_result = test(
                 args,
                 test_loader,
                 model,
@@ -453,12 +463,13 @@ if __name__ == "__main__":
             )
 
             logger.info(f"epoch: {epoch}")
-            for k, v in test_met.items():
+            logger.info(f"train_loss: {train_loss}")
+            for k, v in test_result["findings_met"].items():
                 logger.info(f"test_{k}: {v}")
 
             save_path = os.path.join(
                 args.checkpoint_path_to,
-                f'epoch_{epoch}_BLEU_1_{test_met["BLEU_1"]}.pth',
+                f'epoch_{epoch}_BLEU_1_{test_result["findings_met"]["BLEU_1"]}.pth',
             )
             save(
                 save_path,
@@ -466,11 +477,11 @@ if __name__ == "__main__":
                 optimizer,
                 scheduler,
                 epoch,
-                (val_loss, test_loss, val_met),
+                (test_loss, test_result),
             )
             logger.info(f"Saved To: {save_path}")
 
-    elif args.phase == "TRAIN_STAGE_2":
+    elif args.phase == "TRAIN_STAGE_2" and args.mode == "TRAIN":
 
         _, _ = load(args.checkpoint_path_from, model, optimizer, scheduler)
         logger.info(f"从 {args.checkpoint_path_from} 加载模型权重")
@@ -513,22 +524,22 @@ if __name__ == "__main__":
                 scaler=scaler,
                 train_stage=2,
             )
-            val_loss, val_findings_met, val_impression_met = test(
-                args,
-                val_loader,
-                model,
-                logger,
-                mode="val",
-                metric_ftns=metrics,
-                criterion=criterion,
-                device="cuda",
-                kw_src=args.kw_src,
-                kw_tgt=args.kw_tgt,
-                kw_out=args.kw_out,
-                return_results=False,
-                train_stage=2,
-            )
-            test_loss, test_findings_met, test_impression_met = test(
+            # val_loss, val_result = test(
+            #     args,
+            #     val_loader,
+            #     model,
+            #     logger,
+            #     mode="val",
+            #     metric_ftns=metrics,
+            #     criterion=criterion,
+            #     device="cuda",
+            #     kw_src=args.kw_src,
+            #     kw_tgt=args.kw_tgt,
+            #     kw_out=args.kw_out,
+            #     return_results=False,
+            #     train_stage=2,
+            # )
+            test_loss, test_result = test(
                 args,
                 test_loader,
                 model,
@@ -545,15 +556,15 @@ if __name__ == "__main__":
             )
 
             logger.info(f"epoch: {epoch}")
-            for k, v in test_findings_met.items():
+            for k, v in test_result["findings_met"].items():
                 logger.info(f"val_{k}: {v}")
 
-            for k, v in test_impression_met.items():
+            for k, v in test_result["impression_met"].items():
                 logger.info(f"test_{k}: {v}")
 
             save_path = os.path.join(
                 args.checkpoint_path_to,
-                f'epoch_{epoch}_BLEU_1_{test_findings_met["BLEU_1"]}.pth',
+                f'epoch_{epoch}_BLEU_1_{test_result["findings_met"]["BLEU_1"]}.pth',
             )
 
             save(
@@ -562,12 +573,12 @@ if __name__ == "__main__":
                 optimizer,
                 scheduler,
                 epoch,
-                (val_loss, test_loss, val_findings_met, val_impression_met),
+                (test_loss, test_result),
             )
 
             logger.info(f"Saved To: {save_path}")
 
-    elif args.phase == "TEST":
+    elif args.mode == "TEST":
         # 确保提供了checkpoint路径
         if not args.checkpoint_path_from:
             raise ValueError("必须提供checkpoint路径用于测试!")
@@ -576,10 +587,10 @@ if __name__ == "__main__":
         logger.info(f"从 {args.checkpoint_path_from} 加载模型权重")
 
         # 设置损失函数
-        criterion = CombinedLoss(pad_id=pad_id).cuda() if train_stage == 2 else None
+        criterion = None
 
         # 在测试集上评估
-        test_loss, test_metrics, test_results = test(
+        test_loss, result = test(
             args,
             test_loader,
             model,
@@ -598,8 +609,12 @@ if __name__ == "__main__":
         # 记录测试结果
         logger.info("测试结果:")
         logger.info(f"Test Loss: {test_loss:.4f}")
-        for metric_name, metric_value in test_metrics.items():
-            logger.info(f"Test {metric_name}: {metric_value:.4f}")
+        for metric_name, metric_value in result["findings_met"].items():
+            logger.info(f"Test FINDINGS_{metric_name}: {metric_value:.4f}")
+
+        if train_stage == 2:
+            for metric_name, metric_value in result["impression_met"].items():
+                logger.info(f"Test IMPRESSION_{metric_name}: {metric_value:.4f}")
 
         # 保存预测结果到文件
         results_dir = os.path.join(args.checkpoint_path_to, "test_results")
@@ -607,9 +622,7 @@ if __name__ == "__main__":
 
         # 保存findings结果
         with open(os.path.join(results_dir, "findings_results.txt"), "w") as f:
-            for gt, pred in zip(
-                test_results["findings_gts"], test_results["findings_preds"]
-            ):
+            for gt, pred in zip(result["findings_gts"], result["findings_preds"]):
                 f.write(f"Ground Truth: {gt}\n")
                 f.write(f"Prediction: {pred}\n")
                 f.write("-" * 80 + "\n")
@@ -618,7 +631,7 @@ if __name__ == "__main__":
         if train_stage == 2:
             with open(os.path.join(results_dir, "impression_results.txt"), "w") as f:
                 for gt, pred in zip(
-                    test_results["impression_gts"], test_results["impression_preds"]
+                    result["impression_gts"], result["impression_preds"]
                 ):
                     f.write(f"Ground Truth: {gt}\n")
                     f.write(f"Prediction: {pred}\n")

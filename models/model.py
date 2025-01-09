@@ -600,9 +600,15 @@ class HiMrGn(nn.Module):
             # fusion_features = self.modality_fusion(F_v, history)
             fusion_features = F_v
 
-            logits, F_t, findings_text, loss_lm = self.findings_decoder(
-                fusion_features, findings
-            )
+            if mode == "train":
+                logits, F_t, findings_text, loss_lm = self.findings_decoder(
+                    F_v=fusion_features,
+                    target_embed=findings,
+                )
+            else:
+                logits, F_t, findings_text, loss_lm = self.findings_decoder(
+                    F_v=fusion_features, target_embed=None
+                )
 
             return {
                 "findings_logits": logits,
@@ -622,15 +628,29 @@ class HiMrGn(nn.Module):
 
             # fusion_features = self.modality_fusion(F_v, history)
             fusion_features = F_v
-            findings_logits, F_t, findings_text, findings_loss = self.findings_decoder(
-                fusion_features, findings
-            )
+
+            if mode == "train":
+                findings_logits, F_t, findings_text, findings_loss = (
+                    self.findings_decoder(
+                        F_v=fusion_features,
+                        target_embed=findings,
+                    )
+                )
+            else:
+                findings_logits, F_t, findings_text, findings_loss = (
+                    self.findings_decoder(F_v=fusion_features, target_embed=None)
+                )
 
             F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)
 
-            memory, impression_logits, impression_text, impression_loss = (
-                self.impression_decoder(F_v_prime, F_t_prime, F_t, impression)
-            )
+            if mode == "train":
+                memory, impression_logits, impression_text, impression_loss = (
+                    self.impression_decoder(F_v_prime, F_t_prime, F_t, impression)
+                )
+            else:
+                memory, impression_logits, impression_text, impression_loss = (
+                    self.impression_decoder(F_v_prime, F_t_prime, F_t, None)
+                )
 
             class_logits = self.multi_label_classifier(memory)
 

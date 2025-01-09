@@ -187,7 +187,6 @@ def train(
         scheduler.step(cur_epoch=current_epoch, cur_step=i)
         current_lr = optimizer.param_groups[0]["lr"]
 
-        # 剩余的训练逻辑保持不变
         if scaler != None:
             with torch.cuda.amp.autocast():
                 output = data_distributor(model, source)
@@ -211,7 +210,9 @@ def train(
             loss = criterion(output, target)
 
             running_loss += loss.item()
-            prog_bar.set_description("Loss: {}".format(running_loss / (i + 1)))
+            prog_bar.set_description(
+                "Loss: {}".format(round(running_loss / (i + 1), 8))
+            )
 
             loss.backward()
             torch.nn.utils.clip_grad_value_(model.parameters(), 0.1)
@@ -293,24 +294,25 @@ def test(
             {i: [gt] for i, gt in enumerate(findings_gts_list)},
             {i: [re] for i, re in enumerate(findings_preds_list)},
         )
-        impression_met = metric_ftns(
-            {i: [gt] for i, gt in enumerate(impression_gts_list)},
-            {i: [re] for i, re in enumerate(impression_preds_list)},
-        )
 
-        # 如果需要返回结果
-        if return_results:
-            results = {
-                "findings_gts": findings_gts_list,
-                "findings_preds": findings_preds_list,
-                "impression_gts": impression_gts_list,
-                "impression_preds": impression_preds_list,
-                "report_gts": report_gts_list,
-                "report_preds": report_preds_list,
-            }
-            return running_loss / len(data_loader), findings_met, results
+        impression_met = None
+        if train_stage == 2:
+            impression_met = metric_ftns(
+                {i: [gt] for i, gt in enumerate(impression_gts_list)},
+                {i: [re] for i, re in enumerate(impression_preds_list)},
+            )
 
-    return running_loss / len(data_loader), findings_met, impression_met
+        result = {
+            "findings_met": findings_met,
+            "impression_met": impression_met,
+            "loss": running_loss / len(data_loader),
+            "findings_gts": findings_gts_list,
+            "findings_preds": findings_preds_list,
+            "impression_gts": impression_gts_list,
+            "impression_preds": impression_preds_list,
+        }
+
+    return running_loss / len(data_loader), result
 
 
 def save(path, model, optimizer=None, scheduler=None, epoch=-1, stats=None):
