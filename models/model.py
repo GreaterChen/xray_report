@@ -607,16 +607,10 @@ class HiMrGn(nn.Module):
             fusion_features = self.modality_fusion(F_v, history)
             # fusion_features = F_v
 
-            if mode == "train":
-                logits, F_t, findings_text, loss_lm = self.findings_decoder(
-                    F_v=fusion_features,
-                    target_embed=findings,
-                )
-            else:
-                logits, F_t, findings_text, loss_lm = self.findings_decoder(
-                    F_v=fusion_features,
-                    target_embed=None,
-                )
+            logits, F_t, findings_text, loss_lm = self.findings_decoder(
+                F_v=fusion_features,
+                target_embed=findings if mode == "train" else None,
+            )
 
             return {
                 "findings_logits": logits,
@@ -630,38 +624,34 @@ class HiMrGn(nn.Module):
             }
 
         elif train_stage == 2:
-            F_v = self.image_encoder(image)  # (B, C)
+            with torch.no_grad():
+                F_v = self.image_encoder(image)  # (B, C)
 
-            history = self.history_encoder(history)
+                history = self.history_encoder(history)
 
-            fusion_features = self.modality_fusion(F_v, history)
-            fusion_features = F_v
+                fusion_features = self.modality_fusion(F_v, history)
+                fusion_features = F_v
 
-            if mode == "train":
                 findings_logits, F_t, findings_text, findings_loss = (
                     self.findings_decoder(
                         F_v=fusion_features,
-                        target_embed=findings,
+                        target_embed=findings if mode == "train" else None,
                     )
-                )
-            else:
-                findings_logits, F_t, findings_text, findings_loss = (
-                    self.findings_decoder(F_v=fusion_features, target_embed=None)
                 )
 
             F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)
 
-            if mode == "train":
-                memory, impression_logits, impression_text, impression_loss = (
-                    self.impression_decoder(F_v_prime, F_t_prime, F_t, impression)
+            memory, impression_logits, impression_text, impression_loss = (
+                self.impression_decoder(
+                    F_v_prime,
+                    F_t_prime,
+                    F_t,
+                    impression if mode == "train" else None,
                 )
-            else:
-                memory, impression_logits, impression_text, impression_loss = (
-                    self.impression_decoder(F_v_prime, F_t_prime, F_t, None)
-                )
+            )
 
-            # class_logits = self.multi_label_classifier(memory)
-            class_logits = None
+            class_logits = self.multi_label_classifier(memory)
+            # class_logits = None
 
             F_F = self.cxr_bert_feature_extractor(findings_text)
             F_I = self.cxr_bert_feature_extractor(impression_text)

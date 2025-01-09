@@ -137,17 +137,22 @@ class MIMIC(data.Dataset):  # MIMIC-CXR Dataset
         findings = self.my_pre_caption(info["findings"])
         history = self.my_pre_caption(info["history"])
         label = np.array(info["labels"], dtype=np.float32)
+
+        # 获取图像路径
+        img_path = os.path.join(self.dir, "images", info["image_path"][0])
+
         output = {
             "findings": findings,
             "impression": impression,
             "history": history,
             "label": label,
             "gts": [findings, impression],
+            "image_path": img_path,  # 添加完整图像路径
+            "split": self.mode,  # 添加数据集划分信息
         }
 
         # 处理图像
-        img_file = os.path.join(self.dir, "images", info["image_path"][0])
-        img = Image.open(img_file).convert("RGB")
+        img = Image.open(img_path).convert("RGB")
         img = self.transform(img)
         output["image"] = img
 

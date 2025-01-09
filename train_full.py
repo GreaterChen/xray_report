@@ -31,46 +31,12 @@ from tools.optims import *
 logger = setup_logger(log_dir="logs")
 
 
-# --- Helper Functions ---
-def find_optimal_cutoff(target, predicted):
-    fpr, tpr, threshold = metrics.roc_curve(target, predicted)
-    gmeans = np.sqrt(tpr * (1 - fpr))
-    ix = np.argmax(gmeans)
-    return threshold[ix]
-
-
-def infer(data_loader, model, device="cpu", threshold=None):
-    model.eval()
-    outputs = []
-    targets = []
-
-    with torch.no_grad():
-        prog_bar = tqdm(data_loader)
-        for i, (source, target) in enumerate(prog_bar):
-            source = data_to_device(source, device)
-            target = data_to_device(target, device)
-
-            # Use single input if there is no clinical history
-            if threshold != None:
-                output = model(image=source[0], history=source[3], threshold=threshold)
-            else:
-                output = model(source[0])
-
-            outputs.append(data_to_device(output))
-            targets.append(data_to_device(target))
-
-        outputs = data_concatenate(outputs)
-        targets = data_concatenate(targets)
-
-    return outputs, targets
-
-
 # --- Argument Parser ---
 def parse_args():
     parser = argparse.ArgumentParser()
 
     # Data input settings
-    parser.add_argument("--debug", default=True, help="Debug mode.")
+    parser.add_argument("--debug", default=False, help="Debug mode.")
 
     parser.add_argument(
         "--root_dir",
@@ -167,7 +133,7 @@ def parse_args():
     parser.add_argument(
         "--phase",
         type=str,
-        default="TRAIN_STAGE_2",
+        default="TRAIN_STAGE_1",
         choices=["TRAIN_STAGE_1", "TRAIN_STAGE_2", "TEST", "INFER"],
         help="Phase of the program",
     )
@@ -228,7 +194,7 @@ def parse_args():
     parser.add_argument(
         "--checkpoint_path_to",
         type=str,
-        default="/home/chenlb/xray_report_generation/results/resnet/stage2_no_classification",
+        default="/home/chenlb/xray_report_generation/results/resnet_rerun/stage1",
         help="Path to save the checkpoint to.",
     )
 
@@ -437,7 +403,7 @@ if __name__ == "__main__":
                 train_stage=1,
             )
 
-            test_loss, test_result = test(
+            test_loss, result = test(
                 args,
                 test_loader,
                 model,
@@ -449,18 +415,17 @@ if __name__ == "__main__":
                 kw_src=args.kw_src,
                 kw_tgt=args.kw_tgt,
                 kw_out=args.kw_out,
-                return_results=False,
                 train_stage=1,
+                epoch=epoch,
             )
 
-            logger.info(f"epoch: {epoch}")
-            logger.info(f"train_loss: {train_loss}")
-            for k, v in test_result["findings_met"].items():
-                logger.info(f"test_{k}: {v}")
+            # 记录测试结果
+            log_metrics(logger, epoch, train_loss, test_loss, result)
 
+            # 保存检查点时使用BLEU_1分数
             save_path = os.path.join(
                 args.checkpoint_path_to,
-                f'epoch_{epoch}_BLEU_1_{test_result["findings_met"]["BLEU_1"]}.pth',
+                f'epoch_{epoch}_BLEU_1_{result["metrics_df"]["BLEU_1"].iloc[0]}.pth',
             )
             save(
                 save_path,
@@ -468,7 +433,7 @@ if __name__ == "__main__":
                 optimizer,
                 scheduler,
                 epoch,
-                (test_loss, test_result),
+                (test_loss, result),
             )
             logger.info(f"Saved To: {save_path}")
 
@@ -516,7 +481,7 @@ if __name__ == "__main__":
                 train_stage=2,
             )
 
-            test_loss, test_result = test(
+            test_loss, result = test(
                 args,
                 test_loader,
                 model,
@@ -528,29 +493,25 @@ if __name__ == "__main__":
                 kw_src=args.kw_src,
                 kw_tgt=args.kw_tgt,
                 kw_out=args.kw_out,
-                return_results=False,
                 train_stage=2,
+                epoch=epoch,
             )
 
-            logger.info(f"epoch: {epoch}")
-            for k, v in test_result["findings_met"].items():
-                logger.info(f"test_findings_{k}: {v}")
+            # 记录测试结果
+            log_metrics(logger, epoch, train_loss, test_loss, result)
 
-            for k, v in test_result["impression_met"].items():
-                logger.info(f"test_impression_{k}: {v}")
-
+            # 保存检查点时使用BLEU_1分数
             save_path = os.path.join(
                 args.checkpoint_path_to,
-                f'epoch_{epoch}_BLEU_1_{test_result["impression_met"]["BLEU_1"]}.pth',
+                f'epoch_{epoch}_BLEU_1_{result["metrics_df"]["BLEU_1"].iloc[0]}.pth',
             )
-
             save(
                 save_path,
                 model,
                 optimizer,
                 scheduler,
                 epoch,
-                (test_loss, test_result),
+                (test_loss, result),
             )
 
             logger.info(f"Saved To: {save_path}")
@@ -579,109 +540,13 @@ if __name__ == "__main__":
             kw_src=args.kw_src,
             kw_tgt=args.kw_tgt,
             kw_out=args.kw_out,
-            return_results=True,
             train_stage=train_stage,
+            epoch=None,
         )
 
         # 记录测试结果
         logger.info("测试结果:")
-        logger.info(f"Test Loss: {test_loss:.4f}")
-        for metric_name, metric_value in result["findings_met"].items():
-            logger.info(f"Test FINDINGS_{metric_name}: {metric_value:.4f}")
-
-        if train_stage == 2:
-            for metric_name, metric_value in result["impression_met"].items():
-                logger.info(f"Test IMPRESSION_{metric_name}: {metric_value:.4f}")
-
-        # 保存预测结果到文件
-        results_dir = os.path.join(args.checkpoint_path_to, "test_results")
-        os.makedirs(results_dir, exist_ok=True)
-
-        # 保存findings结果
-        with open(os.path.join(results_dir, "findings_results.txt"), "w") as f:
-            for gt, pred in zip(result["findings_gts"], result["findings_preds"]):
-                f.write(f"Ground Truth: {gt}\n")
-                f.write(f"Prediction: {pred}\n")
-                f.write("-" * 80 + "\n")
-
-        # 如果是第二阶段，还要保存impression结果
-        if train_stage == 2:
-            with open(os.path.join(results_dir, "impression_results.txt"), "w") as f:
-                for gt, pred in zip(
-                    result["impression_gts"], result["impression_preds"]
-                ):
-                    f.write(f"Ground Truth: {gt}\n")
-                    f.write(f"Prediction: {pred}\n")
-                    f.write("-" * 80 + "\n")
-
-        logger.info(f"测试结果已保存到: {results_dir}")
-
-    elif args.phase == "INFER":
-        # txt_test_outputs, txt_test_targets = infer(test_loader, model, device='cuda', threshold=0.25)
-        txt_test_outputs, txt_test_targets = infer(test_loader, model, device="cuda")
-
-        gen_outputs = txt_test_outputs
-        gen_targets = txt_test_targets
-        # gen_outputs = txt_test_outputs[0]
-        # gen_targets = txt_test_targets[0]
-
-        out_file_ref = open(
-            "outputs/x_{}_{}_{}_{}_Ref.txt".format(
-                args.dataset_name, args.model_name, args.backbone_name, comment
-            ),
-            "w",
-        )
-        out_file_hyp = open(
-            "outputs/x_{}_{}_{}_{}_Hyp.txt".format(
-                args.dataset_name, args.model_name, args.backbone_name, comment
-            ),
-            "w",
-        )
-        out_file_lbl = open(
-            "outputs/x_{}_{}_{}_{}_Lbl.txt".format(
-                args.dataset_name, args.model_name, args.backbone_name, comment
-            ),
-            "w",
-        )
-
-        for i in range(len(gen_outputs)):
-            candidate = ""
-            for j in range(len(gen_outputs[i])):
-                tok = test_data.tokenizer.id_to_piece(int(gen_outputs[i, j]))
-                if tok == "</s>":
-                    break  # Manually stop generating token after </s> is reached
-                elif tok == "<s>":
-                    continue
-                elif tok == "▁":  # space
-                    if len(candidate) and candidate[-1] != " ":
-                        candidate += " "
-                elif tok in [",", ".", "-", ":"]:  # or not tok.isalpha():
-                    if len(candidate) and candidate[-1] != " ":
-                        candidate += " " + tok + " "
-                    else:
-                        candidate += tok + " "
-                else:  # letter
-                    candidate += tok
-            out_file_hyp.write(candidate + "\n")
-
-            reference = ""
-            for j in range(len(gen_targets[i])):
-                tok = test_data.tokenizer.id_to_piece(int(gen_targets[i, j]))
-                if tok == "</s>":
-                    break
-                elif tok == "<s>":
-                    continue
-                elif tok == "▁":  # space
-                    if len(reference) and reference[-1] != " ":
-                        reference += " "
-                elif tok in [",", ".", "-", ":"]:  # or not tok.isalpha():
-                    if len(reference) and reference[-1] != " ":
-                        reference += " " + tok + " "
-                    else:
-                        reference += tok + " "
-                else:  # letter
-                    reference += tok
-            out_file_ref.write(reference + "\n")
+        log_metrics(logger, None, None, test_loss, result)
 
     else:
-        raise ValueError("Invalid PHASE")
+        raise ValueError("Invalid phase")

@@ -6,6 +6,7 @@ import logging
 import os
 from datetime import datetime
 from tqdm import tqdm
+import pandas as pd
 
 
 # ------ Helper Functions ------
@@ -232,28 +233,31 @@ def test(
     train_stage=2,
     criterion=None,
     device="cpu",
-    return_results=True,
     kw_src=None,
     kw_tgt=None,
     kw_out=None,
-    select_outputs=[],
+    epoch=None,
 ):
     model.eval()
     running_loss = 0
 
-    outputs = []
-    targets = []
-
+    # 初始化存储列表
     findings_gts_list = []
     findings_preds_list = []
     impression_gts_list = []
     impression_preds_list = []
-    report_gts_list = []
-    report_preds_list = []
+    image_paths_list = []
+    splits_list = []
+    labels_list = []
 
     with torch.no_grad():
         prog_bar = tqdm(data_loader)
         for i, batch in enumerate(prog_bar):
+            # 收集元数据
+            image_paths_list.extend(batch["image_path"])
+            splits_list.extend(batch["split"])
+            labels_list.extend(batch["label"].cpu().numpy().tolist())
+
             # 收集ground truth
             findings_gts_list.extend([gt for gt in batch["gts"][0]])
             impression_gts_list.extend([gt for gt in batch["gts"][1]])
@@ -267,6 +271,7 @@ def test(
 
             source["train_stage"] = train_stage
             source["mode"] = mode
+
             # 模型推理
             output = data_distributor(model, source)
             output = args_to_kwargs(output, kw_out)
@@ -278,16 +283,30 @@ def test(
 
             # 记录日志
             logger.info(f"findings_preds: {output['findings_text'][0]}")
-
             if train_stage == 2:
                 logger.info(f"impression_preds: {output['impression_text'][0]}")
 
             # 计算损失
             if criterion is not None:
-                # loss, detailed_loss = criterion(output, target)
                 loss = torch.tensor(0.0)
                 running_loss += loss.item()
             prog_bar.set_description("Loss: {}".format(running_loss / (i + 1)))
+
+        # 创建结果数据字典
+        results_data = {
+            "image_path": image_paths_list,
+            "split": splits_list,
+            "findings_gt": findings_gts_list,
+            "findings_pred": findings_preds_list,
+            "labels": labels_list,
+            "timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+            * len(findings_gts_list),
+        }
+
+        # 添加impression相关数据(如果是第二阶段)
+        if train_stage == 2:
+            results_data["impression_gt"] = impression_gts_list
+            results_data["impression_pred"] = impression_preds_list
 
         # 计算评估指标
         findings_met = metric_ftns(
@@ -302,14 +321,50 @@ def test(
                 {i: [re] for i, re in enumerate(impression_preds_list)},
             )
 
+        # 创建结果目录
+        results_dir = os.path.join(args.checkpoint_path_to, "test_results")
+        os.makedirs(results_dir, exist_ok=True)
+
+        # 将结果转换为DataFrame并保存
+        results_df = pd.DataFrame(results_data)
+
+        # 保存为CSV文件，添加epoch信息
+        epoch_str = str(epoch) if epoch is not None else "TEST"
+        csv_filename = f"{mode}_results_epoch_{epoch_str}.csv"
+        results_df.to_csv(os.path.join(results_dir, csv_filename), index=False)
+        logger.info(f"结果已保存到CSV文件: {csv_filename}")
+
+        # 计算并保存评估指标
+        metrics_data = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "mode": mode,
+            "train_stage": train_stage,
+            "epoch": epoch_str,
+            "loss": running_loss / len(data_loader),
+        }
+
+        # 添加findings指标
+        for metric_name, value in findings_met.items():
+            metrics_data[f"findings_{metric_name}"] = value
+
+        # 添加impression指标(如果是第二阶段)
+        if train_stage == 2 and impression_met:
+            for metric_name, value in impression_met.items():
+                metrics_data[f"impression_{metric_name}"] = value
+
+        # 保存评估指标，添加epoch信息
+        metrics_df = pd.DataFrame([metrics_data])
+        metrics_filename = f"{mode}_metrics_epoch_{epoch_str}.csv"
+        metrics_df.to_csv(os.path.join(results_dir, metrics_filename), index=False)
+        logger.info(f"评估指标已保存到CSV文件: {metrics_filename}")
+
+        # 返回结果
         result = {
             "findings_met": findings_met,
             "impression_met": impression_met,
             "loss": running_loss / len(data_loader),
-            "findings_gts": findings_gts_list,
-            "findings_preds": findings_preds_list,
-            "impression_gts": impression_gts_list,
-            "impression_preds": impression_preds_list,
+            "results_df": results_df,
+            "metrics_df": metrics_df,
         }
 
     return running_loss / len(data_loader), result
@@ -352,6 +407,33 @@ def load(path, model, optimizer=None, scheduler=None):
     #     except:  # Input scheduler doesn't fit the checkpoint one --> should be ignored
     #         print("Cannot load the scheduler")
     return epoch, stats
+
+
+def log_metrics(logger, epoch, train_loss, test_loss, result):
+    """记录训练和测试的评估指标
+
+    Args:
+        logger: 日志记录器
+        epoch: 当前轮次(可选,如果是None则不输出)
+        train_loss: 训练损失(可选,如果是None则不输出)
+        test_loss: 测试损失
+        result: 包含metrics_df的结果字典
+    """
+    if epoch is not None:
+        logger.info(f"epoch: {epoch}")
+    if train_loss is not None:
+        logger.info(f"train_loss: {train_loss}")
+    logger.info(f"test_loss: {test_loss:.4f}")
+
+    # 输出评估指标
+    metrics_df = result["metrics_df"]
+    for index, row in metrics_df.iterrows():
+        for column in metrics_df.columns:
+            value = row[column]
+            if isinstance(value, (int, float)):
+                logger.info(f"{column}: {value:.4f}")
+            else:
+                logger.info(f"{column}: {value}")
 
 
 def count_parameters(model):
