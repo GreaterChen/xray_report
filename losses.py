@@ -135,8 +135,11 @@ class CombinedLoss(nn.Module):
         )  # 解包 output
         class_logits_gt = targets["label"]  # 解包 targets
 
-        # 计算分类损失
-        class_loss = self.multi_label_loss(class_logits, class_logits_gt)
+        if class_logits is None:
+            class_loss = torch.tensor(0.0)
+        else:
+            # 计算分类损失
+            class_loss = self.multi_label_loss(class_logits, class_logits_gt)
 
         # 计算对比学习损失
         contrastive_loss = self.contrastive_loss(F_F, F_I)

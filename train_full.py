@@ -70,7 +70,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # Data input settings
-    parser.add_argument("--debug", default=False, help="Debug mode.")
+    parser.add_argument("--debug", default=True, help="Debug mode.")
 
     parser.add_argument(
         "--root_dir",
@@ -167,7 +167,7 @@ def parse_args():
     parser.add_argument(
         "--phase",
         type=str,
-        default="TRAIN_STAGE_1",
+        default="TRAIN_STAGE_2",
         choices=["TRAIN_STAGE_1", "TRAIN_STAGE_2", "TEST", "INFER"],
         help="Phase of the program",
     )
@@ -176,13 +176,13 @@ def parse_args():
     parser.add_argument(
         "--mode",
         type=str,
-        default="TEST",
+        default="TRAIN",
         choices=["TRAIN", "TEST"],
         help="Train or Test",
     )
 
     parser.add_argument(
-        "--train_batch_size", type=int, default=48, help="Batch size for training."
+        "--train_batch_size", type=int, default=32, help="Batch size for training."
     )
     parser.add_argument(
         "--val_batch_size", type=int, default=8, help="Batch size for validation."
@@ -221,13 +221,14 @@ def parse_args():
     parser.add_argument(
         "--checkpoint_path_from",
         type=str,
-        default="/home/chenlb/xray_report_generation/results/resnet_no_history/fix/epoch_5_BLEU_1_0.6698646953408688.pth",
+        # default="/home/chenlb/xray_report_generation/results/resnet_no_history/epoch_17_BLEU_1_0.6621907341655455.pth",
+        default="/home/chenlb/xray_report_generation/results/resnet/stage1/epoch_7_BLEU_1_0.3895615946837098.pth",
         help="Path to load the checkpoint from.",
     )
     parser.add_argument(
         "--checkpoint_path_to",
         type=str,
-        default="/home/chenlb/xray_report_generation/results/resnet_no_history/fix",
+        default="/home/chenlb/xray_report_generation/results/resnet/stage2_no_classification",
         help="Path to save the checkpoint to.",
     )
 
@@ -306,13 +307,17 @@ if __name__ == "__main__":
 
         modality_fusion = ModalityFusion(hidden_size=768)
 
-        findings_decoder = BLIP_Decoder(args, tokenizer=tokenizer)
+        findings_decoder = BLIP_Decoder(
+            args, tokenizer=tokenizer, max_length=args.max_len_findings
+        )
         findings_generator = FindingsGenerator(findings_decoder)
 
         co_attention_module = CoAttentionModule(embed_dim=768)
         multi_label_classifier = MultiLabelClassifier(input_dim=768, hidden_dim=384)
 
-        impression_decoder = BLIP_Decoder(args, tokenizer=tokenizer)
+        impression_decoder = BLIP_Decoder(
+            args, tokenizer=tokenizer, max_length=args.max_len_impression
+        )
         impression_generator = ImpressionGenerator(impression_decoder)
 
         cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor()
@@ -431,21 +436,7 @@ if __name__ == "__main__":
                 scaler=scaler,
                 train_stage=1,
             )
-            # val_loss, val_result = test(
-            #     args,
-            #     val_loader,
-            #     model,
-            #     logger,
-            #     mode="val",
-            #     metric_ftns=metrics,
-            #     criterion=criterion,
-            #     device="cuda",
-            #     kw_src=args.kw_src,
-            #     kw_tgt=args.kw_tgt,
-            #     kw_out=args.kw_out,
-            #     return_results=False,
-            #     train_stage=1,
-            # )
+
             test_loss, test_result = test(
                 args,
                 test_loader,
@@ -524,21 +515,7 @@ if __name__ == "__main__":
                 scaler=scaler,
                 train_stage=2,
             )
-            # val_loss, val_result = test(
-            #     args,
-            #     val_loader,
-            #     model,
-            #     logger,
-            #     mode="val",
-            #     metric_ftns=metrics,
-            #     criterion=criterion,
-            #     device="cuda",
-            #     kw_src=args.kw_src,
-            #     kw_tgt=args.kw_tgt,
-            #     kw_out=args.kw_out,
-            #     return_results=False,
-            #     train_stage=2,
-            # )
+
             test_loss, test_result = test(
                 args,
                 test_loader,
@@ -557,14 +534,14 @@ if __name__ == "__main__":
 
             logger.info(f"epoch: {epoch}")
             for k, v in test_result["findings_met"].items():
-                logger.info(f"val_{k}: {v}")
+                logger.info(f"test_findings_{k}: {v}")
 
             for k, v in test_result["impression_met"].items():
-                logger.info(f"test_{k}: {v}")
+                logger.info(f"test_impression_{k}: {v}")
 
             save_path = os.path.join(
                 args.checkpoint_path_to,
-                f'epoch_{epoch}_BLEU_1_{test_result["findings_met"]["BLEU_1"]}.pth',
+                f'epoch_{epoch}_BLEU_1_{test_result["impression_met"]["BLEU_1"]}.pth',
             )
 
             save(

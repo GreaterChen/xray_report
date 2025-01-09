@@ -195,7 +195,7 @@ def train(
                     loss = output["loss_lm"]
                 else:
                     loss, _ = criterion(output, target)
-                    loss = loss + output["findings_loss"] + output["impression_loss"]
+                    loss = loss + output["impression_loss"]
 
             running_loss += loss.item()
             prog_bar.set_description(f"Loss: {running_loss/(i+1)} | LR: {current_lr}")

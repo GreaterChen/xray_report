@@ -23,6 +23,7 @@ class BLIP_Decoder(nn.Module):
         args,
         tokenizer,
         hidden_dim=768,
+        max_length=196,
         prompt="",
     ):
         super().__init__()
@@ -30,7 +31,7 @@ class BLIP_Decoder(nn.Module):
         self.tokenizer = tokenizer
         self.hidden_dim = hidden_dim
         self.prompt = prompt
-
+        self.max_length = max_length
         # 加载BERT配置
         decoder_config = BertConfig.from_json_file(
             os.path.join(args.root_dir, "configs/bert_config.json")
@@ -99,14 +100,13 @@ class BLIP_Decoder(nn.Module):
         else:
             # 使用generate方法生成文本
             logits, hidden_states, captions = self.generate(encoder_hidden_states)
-            return logits, hidden_states, captions, None
+            return logits, hidden_states, captions, 0
 
     def generate(
         self,
         image_embeds,
         sample=False,
         num_beams=3,
-        max_length=196,
         min_length=100,
         top_p=0.9,
         repetition_penalty=1.0,
@@ -132,7 +132,7 @@ class BLIP_Decoder(nn.Module):
         outputs = self.text_decoder.generate(
             input_ids=input_ids,
             # min_length=min_length,
-            max_new_tokens=max_length - 1,
+            max_new_tokens=self.max_length - 1,
             num_beams=num_beams,
             eos_token_id=self.tokenizer.sep_token_id,
             pad_token_id=self.tokenizer.pad_token_id,
@@ -143,6 +143,13 @@ class BLIP_Decoder(nn.Module):
         # 获取生成的序列
         # generated_tokens = outputs.sequences  # (batch_size, seq_len)
         generated_tokens = outputs
+        padded_tokens = torch.full(
+            (batch_size, self.max_length), self.tokenizer.pad_token_id, dtype=torch.long
+        ).to(image_embeds.device)
+        for i, tokens in enumerate(generated_tokens):
+            seq_len = len(tokens)
+            padded_tokens[i, :seq_len] = tokens
+        generated_tokens = padded_tokens
 
         # 使用forward pass获取hidden states
         attention_mask = (generated_tokens != self.tokenizer.pad_token_id).long()
@@ -251,7 +258,7 @@ class CXR_BERT_FeatureExtractor(nn.Module):
         """
         # 对输入文本进行编码
         inputs = self.tokenizer(
-            texts, max_length=512, padding=True, truncation=True, return_tensors="pt"
+            texts, max_length=196, padding=True, truncation=True, return_tensors="pt"
         ).to(self.device)
 
         with torch.no_grad():
@@ -295,7 +302,7 @@ class ViTAdapter(nn.Module):
 
 class ModalityFusion(nn.Module):
     def __init__(
-        self, hidden_size=768, num_heads=8, num_layers=2, mlp_ratio=4.0, dropout=0.1
+        self, hidden_size=768, num_heads=1, num_layers=1, mlp_ratio=4.0, dropout=0.1
     ):
         super().__init__()
 
@@ -595,10 +602,10 @@ class HiMrGn(nn.Module):
         if train_stage == 1:
             F_v = self.image_encoder(image)
 
-            # history = self.history_encoder(history)
+            history = self.history_encoder(history)
 
-            # fusion_features = self.modality_fusion(F_v, history)
-            fusion_features = F_v
+            fusion_features = self.modality_fusion(F_v, history)
+            # fusion_features = F_v
 
             if mode == "train":
                 logits, F_t, findings_text, loss_lm = self.findings_decoder(
@@ -607,7 +614,8 @@ class HiMrGn(nn.Module):
                 )
             else:
                 logits, F_t, findings_text, loss_lm = self.findings_decoder(
-                    F_v=fusion_features, target_embed=None
+                    F_v=fusion_features,
+                    target_embed=None,
                 )
 
             return {
@@ -624,9 +632,9 @@ class HiMrGn(nn.Module):
         elif train_stage == 2:
             F_v = self.image_encoder(image)  # (B, C)
 
-            # history = self.history_encoder(history)
+            history = self.history_encoder(history)
 
-            # fusion_features = self.modality_fusion(F_v, history)
+            fusion_features = self.modality_fusion(F_v, history)
             fusion_features = F_v
 
             if mode == "train":
@@ -652,7 +660,8 @@ class HiMrGn(nn.Module):
                     self.impression_decoder(F_v_prime, F_t_prime, F_t, None)
                 )
 
-            class_logits = self.multi_label_classifier(memory)
+            # class_logits = self.multi_label_classifier(memory)
+            class_logits = None
 
             F_F = self.cxr_bert_feature_extractor(findings_text)
             F_I = self.cxr_bert_feature_extractor(impression_text)
