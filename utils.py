@@ -523,3 +523,158 @@ def setup_logger(log_dir="logs"):
     logger.addHandler(console_handler)
 
     return logger
+
+
+def analyze_results_from_csv(csv_path, metric_ftns=None):
+    """从CSV文件中分析结果并计算评估指标，包括findings、impression以及它们的组合
+    
+    Args:
+        csv_path: CSV文件路径
+        metric_ftns: 计算指标的函数，默认为None
+        
+    Returns:
+        dict: 包含findings、impression和combined指标的字典
+    """
+    # 读取CSV文件
+    df = pd.read_csv(csv_path)
+    
+    # 检查必要的列是否存在
+    required_columns = ['findings_gt', 'findings_pred']
+    if not all(col in df.columns for col in required_columns):
+        raise ValueError(f"CSV文件必须包含以下列: {required_columns}")
+    
+    # 准备findings的ground truth和预测结果
+    findings_gts = {i: [gt] for i, gt in enumerate(df['findings_gt'])}
+    findings_preds = {i: [pred] for i, pred in enumerate(df['findings_pred'])}
+    
+    # 计算findings的指标
+    findings_metrics = metric_ftns(findings_gts, findings_preds) if metric_ftns else {}
+    
+    # 初始化impression和combined的指标为None
+    impression_metrics = None
+    combined_metrics = None
+    
+    # 如果存在impression相关列，计算impression和combined的指标
+    if 'impression_gt' in df.columns and 'impression_pred' in df.columns:
+        # 计算impression的指标
+        impression_gts = {i: [gt] for i, gt in enumerate(df['impression_gt'])}
+        impression_preds = {i: [pred] for i, pred in enumerate(df['impression_pred'])}
+        impression_metrics = metric_ftns(impression_gts, impression_preds) if metric_ftns else {}
+        
+        # 计算combined (findings + impression)的指标
+        combined_gts = {i: [f"{f} {i}"] for i, (f, i) in 
+                       enumerate(zip(df['findings_gt'], df['impression_gt']))}
+        combined_preds = {i: [f"{f} {i}"] for i, (f, i) in 
+                         enumerate(zip(df['findings_pred'], df['impression_pred']))}
+        combined_metrics = metric_ftns(combined_gts, combined_preds) if metric_ftns else {}
+    
+    # 整理结果
+    results = {
+        'findings_metrics': findings_metrics,
+        'impression_metrics': impression_metrics,
+        'combined_metrics': combined_metrics
+    }
+    
+    return results
+
+
+def save_generations(
+    args,
+    data_loader,
+    model,
+    logger,
+    save_dir,
+    mode="test",
+    train_stage=2,
+    device="cpu",
+    kw_src=None,
+    kw_tgt=None,
+    kw_out=None,
+):
+    """保存模型生成的findings和impression结果
+    
+    Args:
+        args: 配置参数
+        data_loader: 数据加载器
+        model: 模型
+        logger: 日志记录器
+        save_dir: 保存结果的目录
+        mode: 运行模式，默认为"test"
+        train_stage: 训练阶段，默认为2
+        device: 计算设备
+        kw_src: source关键字参数列表
+        kw_tgt: target关键字参数列表
+        kw_out: output关键字参数列表
+    """
+    model.eval()
+    
+    # 初始化存储列表
+    findings_gts_list = []
+    findings_preds_list = []
+    impression_gts_list = []
+    impression_preds_list = []
+    image_paths_list = []
+    splits_list = []
+    labels_list = []
+
+    with torch.no_grad():
+        prog_bar = tqdm(data_loader)
+        for batch in prog_bar:
+            # 收集元数据
+            image_paths_list.extend(batch["image_path"])
+            splits_list.extend(batch["split"])
+            labels_list.extend(batch["label"].cpu().numpy().tolist())
+            
+            # 收集ground truth
+            findings_gts_list.extend([gt for gt in batch["gts"][0]])
+            impression_gts_list.extend([gt for gt in batch["gts"][1]])
+            
+            # 准备批次数据
+            source, target, _ = prepare_batch_data(args, batch, data_loader, device)
+            
+            # 转换为kwargs格式
+            source = args_to_kwargs(source, kw_src)
+            target = args_to_kwargs(target, kw_tgt)
+            
+            source["train_stage"] = train_stage
+            source["mode"] = mode
+            
+            # 模型推理
+            output = data_distributor(model, source)
+            output = args_to_kwargs(output, kw_out)
+            
+            # 收集预测结果
+            findings_preds_list.extend([re for re in output["findings_text"]])
+            if train_stage == 2:
+                impression_preds_list.extend([re for re in output["impression_text"]])
+
+    # 创建保存目录
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # 创建结果数据字典
+    results_data = {
+        "image_path": image_paths_list,
+        "split": splits_list,
+        "findings_gt": findings_gts_list,
+        "findings_pred": findings_preds_list,
+        "labels": labels_list,
+        "timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")] * len(findings_gts_list)
+    }
+    
+    # 添加impression相关数据(如果是第二阶段)
+    if train_stage == 2:
+        results_data["impression_gt"] = impression_gts_list
+        results_data["impression_pred"] = impression_preds_list
+    
+    # 将结果转换为DataFrame并保存
+    results_df = pd.DataFrame(results_data)
+    
+    # 生成文件名并保存
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    csv_filename = f"{mode}_generations_{timestamp}.csv"
+    save_path = os.path.join(save_dir, csv_filename)
+    results_df.to_csv(save_path, index=False)
+    
+    logger.info(f"生成结果已保存到: {save_path}")
+    logger.info(f"总共保存了 {len(findings_gts_list)} 条记录")
+    

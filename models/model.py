@@ -375,7 +375,7 @@ class FindingsGenerator(nn.Module):
 
 
 class CoAttentionBlock(nn.Module):
-    def __init__(self, embed_dim=768, num_heads=8):
+    def __init__(self, embed_dim=768, num_heads=6):
         """
         单个 Co-Attention Block 的实现，包含以下步骤：
         1. 自注意力 (Self-Attention)
@@ -464,7 +464,7 @@ class CoAttentionBlock(nn.Module):
 
 
 class CoAttentionModule(nn.Module):
-    def __init__(self, embed_dim=768, num_heads=8, num_blocks=6):
+    def __init__(self, embed_dim=768, num_heads=6, num_blocks=6):
         """
         Co-Attention 模块，由多个 Co-Attention Block 组成。
         Args:
@@ -560,7 +560,10 @@ class ImpressionGenerator(nn.Module):
             output: 生成的词汇分布 (B, max_len, vocab_size)
         """
         # 拼接特征
-        memory = torch.cat([F_v_prime, F_t_prime, F_t], dim=1)  # (B, N_v + 2*N_t, C)
+        # memory = torch.cat([F_v_prime, F_t_prime, F_t], dim=1)  # (B, N_v + 2*N_t, C)
+        memory = F_t
+
+
 
         # 使用 BLIP_Decoder 进行生成
         logits, _, impression_text, loss_lm = self.text_decoder(memory, target_embed)
@@ -639,22 +642,27 @@ class HiMrGn(nn.Module):
                     )
                 )
 
-            F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)
+            # F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)
 
             memory, impression_logits, impression_text, impression_loss = (
                 self.impression_decoder(
-                    F_v_prime,
-                    F_t_prime,
                     F_t,
+                    F_t,
+                    F_v,
                     impression if mode == "train" else None,
                 )
             )
 
-            class_logits = self.multi_label_classifier(memory)
-            # class_logits = None
+            # class_logits = self.multi_label_classifier(memory)
+            class_logits = None
 
-            F_F = self.cxr_bert_feature_extractor(findings_text)
-            F_I = self.cxr_bert_feature_extractor(impression_text)
+            F_F = None
+            F_I = None
+
+            # F_F = self.cxr_bert_feature_extractor(findings_text)
+            # F_I = self.cxr_bert_feature_extractor(impression_text)
+
+
 
             return {
                 "findings_logits": findings_logits,

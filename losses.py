@@ -142,7 +142,10 @@ class CombinedLoss(nn.Module):
             class_loss = self.multi_label_loss(class_logits, class_logits_gt)
 
         # 计算对比学习损失
-        contrastive_loss = self.contrastive_loss(F_F, F_I)
+        if F_F is not None and F_I is not None:
+            contrastive_loss = self.contrastive_loss(F_F, F_I)
+        else:
+            contrastive_loss = torch.tensor(0.0)
 
         # 综合损失
         total_loss = (

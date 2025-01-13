@@ -36,7 +36,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # Data input settings
-    parser.add_argument("--debug", default=True, help="Debug mode.")
+    parser.add_argument("--debug", default=False, help="Debug mode.")
 
     parser.add_argument(
         "--root_dir",
@@ -142,7 +142,7 @@ def parse_args():
     parser.add_argument(
         "--mode",
         type=str,
-        default="TRAIN",
+        default="TEST",
         choices=["TRAIN", "TEST"],
         help="Train or Test",
     )
@@ -187,14 +187,14 @@ def parse_args():
     parser.add_argument(
         "--checkpoint_path_from",
         type=str,
-        # default="/home/chenlb/xray_report_generation/results/resnet_no_history/epoch_17_BLEU_1_0.6621907341655455.pth",
-        default="/home/chenlb/xray_report_generation/results/resnet/stage1/epoch_19_BLEU_1_0.41520361597936345.pth",
+        default="/mnt/chenlb/report/results/stage2_no_pretrain/epoch_21_BLEU_1_0.2541565170759811.pth",
+        # default="/home/chenlb/xray_report_generation/results/resnet/stage1/epoch_19_BLEU_1_0.41520361597936345.pth",
         help="Path to load the checkpoint from.",
     )
     parser.add_argument(
         "--checkpoint_path_to",
         type=str,
-        default="/home/chenlb/xray_report_generation/results/ablation/test",
+        default="/mnt/chenlb/report/results/stage2_no_pretrain",
         help="Path to save the checkpoint to.",
     )
 
@@ -227,7 +227,7 @@ if __name__ == "__main__":
             else 2 if args.phase == "TRAIN_STAGE_2" else 3
         )
 
-        MIMIC.load_shared_data(args.data_dir, train_stage)
+        MIMIC.load_shared_data(args.data_dir, train_stage, args.mode)
         # 创建训练、验证和测试数据集
         train_data = MIMIC(
             args.data_dir,
@@ -537,33 +537,25 @@ if __name__ == "__main__":
         # 确保提供了checkpoint路径
         if not args.checkpoint_path_from:
             raise ValueError("必须提供checkpoint路径用于测试!")
+        
         # 加载模型权重
         _, _ = load(args.checkpoint_path_from, model, optimizer, scheduler)
         logger.info(f"从 {args.checkpoint_path_from} 加载模型权重")
 
-        # 设置损失函数
-        criterion = None
-
-        # 在测试集上评估
-        test_loss, result = test(
+        # 保存生成结果
+        save_generations(
             args,
             test_loader,
             model,
             logger,
-            mode="test",
-            metric_ftns=metrics,
-            criterion=criterion,
+            save_dir=os.path.join(args.checkpoint_path_to, "generations"),
+            mode="test", 
+            train_stage=train_stage,
             device="cuda",
             kw_src=args.kw_src,
             kw_tgt=args.kw_tgt,
             kw_out=args.kw_out,
-            train_stage=train_stage,
-            epoch=None,
         )
-
-        # 记录测试结果
-        logger.info("测试结果:")
-        log_metrics(logger, None, None, test_loss, result)
 
     else:
         raise ValueError("Invalid phase")

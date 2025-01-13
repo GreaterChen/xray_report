@@ -44,7 +44,7 @@ class MIMIC(data.Dataset):  # MIMIC-CXR Dataset
     target_sections = ["FINDINGS:", "IMPRESSION:"]
 
     @classmethod
-    def load_shared_data(cls, directory, stage, binary_mode=True):
+    def load_shared_data(cls, directory, stage, mode, binary_mode=True):
         """静态方法，用于加载所有数据集共享的数据"""
         if cls._shared_data["loaded"]:
             return
@@ -55,7 +55,7 @@ class MIMIC(data.Dataset):  # MIMIC-CXR Dataset
         with open(annotation_file, "r") as f:
             annotation_data = json.load(f)
 
-        if stage == 1:
+        if stage == 1 or mode == "TEST":
             filtered_annotation = {}
             for key, data_split in annotation_data.items():
                 filtered_annotation[key] = [
@@ -66,7 +66,7 @@ class MIMIC(data.Dataset):  # MIMIC-CXR Dataset
             filtered_annotation = {}
             for key, data_split in annotation_data.items():
                 filtered_annotation[key] = [
-                    item for item in data_split if item["impression"].strip() != ""
+                    item for item in data_split if item["findings"].strip() != ""
                 ]
             cls._shared_data["annotation"] = filtered_annotation
         elif stage == 3:  # todo
@@ -85,7 +85,7 @@ class MIMIC(data.Dataset):  # MIMIC-CXR Dataset
         subset_size=None,
     ):
 
-        self.load_shared_data(directory, train_stage)
+        self.load_shared_data(directory, train_stage, mode)
 
         self.tokenizer = tokenizer
         self.bos_token_id = self.tokenizer.bos_token_id
