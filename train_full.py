@@ -36,7 +36,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # Data input settings
-    parser.add_argument("--debug", default=False, help="Debug mode.")
+    parser.add_argument("--debug", default=True, help="Debug mode.")
 
     parser.add_argument(
         "--root_dir",
@@ -133,7 +133,7 @@ def parse_args():
     parser.add_argument(
         "--phase",
         type=str,
-        default="TRAIN_STAGE_1",
+        default="TRAIN_STAGE_2",
         choices=["TRAIN_STAGE_1", "TRAIN_STAGE_2", "TEST", "INFER"],
         help="Phase of the program",
     )
@@ -154,7 +154,7 @@ def parse_args():
         "--val_batch_size", type=int, default=8, help="Batch size for validation."
     )
     parser.add_argument(
-        "--num_workers", type=int, default=4, help="Number of workers for training."
+        "--num_workers", type=int, default=6, help="Number of workers for training."
     )
     parser.add_argument(
         "--epochs", type=int, default=20, help="Number of epochs for training."
@@ -188,13 +188,13 @@ def parse_args():
         "--checkpoint_path_from",
         type=str,
         # default="/home/chenlb/xray_report_generation/results/resnet_no_history/epoch_17_BLEU_1_0.6621907341655455.pth",
-        default="/home/chenlb/xray_report_generation/results/resnet/stage1/epoch_7_BLEU_1_0.3895615946837098.pth",
+        default="/home/chenlb/xray_report_generation/results/resnet/stage1/epoch_19_BLEU_1_0.41520361597936345.pth",
         help="Path to load the checkpoint from.",
     )
     parser.add_argument(
         "--checkpoint_path_to",
         type=str,
-        default="/home/chenlb/xray_report_generation/results/resnet_rerun/stage1",
+        default="/home/chenlb/xray_report_generation/results/ablation/test",
         help="Path to save the checkpoint to.",
     )
 
@@ -443,21 +443,38 @@ if __name__ == "__main__":
         logger.info(f"从 {args.checkpoint_path_from} 加载模型权重")
 
         # 冻结指定模块的参数
-        for param in model.image_encoder.parameters():
-            param.requires_grad = False
+        # for param in model.image_encoder.parameters():
+        #     param.requires_grad = False
 
-        for param in model.history_encoder.parameters():
-            param.requires_grad = False
+        # for param in model.history_encoder.parameters():
+        #     param.requires_grad = False
 
-        for param in model.modality_fusion.parameters():
-            param.requires_grad = False
+        # for param in model.modality_fusion.parameters():
+        #     param.requires_grad = False
 
-        for param in model.findings_decoder.parameters():
-            param.requires_grad = False
+        # for param in model.findings_decoder.parameters():
+        #     param.requires_grad = False
 
-        logger.info(
-            "已冻结 image_encoder, history_encoder, modality_fusion, findings_decoder 的参数"
+        optimizer = optim.AdamW(
+            [
+                {"params": model.image_encoder.parameters(), "lr": 1e-7},
+                {"params": model.history_encoder.parameters(), "lr": 1e-7},
+                {"params": model.modality_fusion.parameters(), "lr": 1e-7},
+                {"params": model.findings_decoder.parameters(), "lr": 1e-7},
+                {"params": model.multi_label_classifier.parameters()},
+                {"params": model.co_attention_module.parameters()},
+                {"params": model.impression_decoder.parameters()},
+                {"params": model.cxr_bert_feature_extractor.parameters()},
+            ],
+            lr=args.lr,
+            weight_decay=args.wd,
         )
+
+
+
+        # logger.info(
+        #     "已冻结 image_encoder, history_encoder, modality_fusion, findings_decoder 的参数"
+        # )
 
         criterion = CombinedLoss(pad_id=pad_id).cuda()
         scaler = torch.cuda.amp.GradScaler()
@@ -503,7 +520,7 @@ if __name__ == "__main__":
             # 保存检查点时使用BLEU_1分数
             save_path = os.path.join(
                 args.checkpoint_path_to,
-                f'epoch_{epoch}_BLEU_1_{result["metrics_df"]["BLEU_1"].iloc[0]}.pth',
+                f'epoch_{epoch}_BLEU_1_{result["metrics_df"]["impression_BLEU_1"].iloc[0]}.pth',
             )
             save(
                 save_path,
