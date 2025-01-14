@@ -66,7 +66,7 @@ class MIMIC(data.Dataset):  # MIMIC-CXR Dataset
             filtered_annotation = {}
             for key, data_split in annotation_data.items():
                 filtered_annotation[key] = [
-                    item for item in data_split if item["findings"].strip() != ""
+                    item for item in data_split if item["impression"].strip() != ""
                 ]
             cls._shared_data["annotation"] = filtered_annotation
         elif stage == 3:  # todo

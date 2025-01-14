@@ -35,9 +35,12 @@ logger = setup_logger(log_dir="logs")
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    # Data input settings
-    parser.add_argument("--debug", default=False, help="Debug mode.")
+    parser.add_argument("--debug", action="store_true", help="Debug mode.")
+    parser.add_argument("--CLS", action="store_true", help="Classifier.")
+    parser.add_argument("--CO", action="store_true", help="Co-attention.")
+    parser.add_argument("--CL", action="store_true", help="Constrained Learning.")
 
+    # Data input settings
     parser.add_argument(
         "--root_dir",
         type=str,
@@ -142,13 +145,13 @@ def parse_args():
     parser.add_argument(
         "--mode",
         type=str,
-        default="TEST",
+        default="TRAIN",
         choices=["TRAIN", "TEST"],
         help="Train or Test",
     )
 
     parser.add_argument(
-        "--train_batch_size", type=int, default=32, help="Batch size for training."
+        "--train_batch_size", type=int, default=16, help="Batch size for training."
     )
     parser.add_argument(
         "--val_batch_size", type=int, default=8, help="Batch size for validation."
@@ -187,14 +190,14 @@ def parse_args():
     parser.add_argument(
         "--checkpoint_path_from",
         type=str,
-        default="/mnt/chenlb/report/results/stage2_no_pretrain/epoch_21_BLEU_1_0.2541565170759811.pth",
-        # default="/home/chenlb/xray_report_generation/results/resnet/stage1/epoch_19_BLEU_1_0.41520361597936345.pth",
+        # default="/mnt/chenlb/report/results/stage2_no_pretrain/epoch_21_BLEU_1_0.2541565170759811.pth",
+        default="/home/chenlb/xray_report_generation/results/resnet/stage1/epoch_19_BLEU_1_0.41520361597936345.pth",
         help="Path to load the checkpoint from.",
     )
     parser.add_argument(
         "--checkpoint_path_to",
         type=str,
-        default="/mnt/chenlb/report/results/stage2_no_pretrain",
+        default="/mnt/chenlb/report/results/ablation/baseline",
         help="Path to save the checkpoint to.",
     )
 
@@ -289,6 +292,7 @@ if __name__ == "__main__":
         cxr_bert_feature_extractor = CXR_BERT_FeatureExtractor()
 
         model = HiMrGn(
+            args=args,
             image_encoder=resnet101,
             history_encoder=history_encoder,
             modality_fusion=modality_fusion,
@@ -470,8 +474,6 @@ if __name__ == "__main__":
             weight_decay=args.wd,
         )
 
-
-
         # logger.info(
         #     "已冻结 image_encoder, history_encoder, modality_fusion, findings_decoder 的参数"
         # )
@@ -537,7 +539,7 @@ if __name__ == "__main__":
         # 确保提供了checkpoint路径
         if not args.checkpoint_path_from:
             raise ValueError("必须提供checkpoint路径用于测试!")
-        
+
         # 加载模型权重
         _, _ = load(args.checkpoint_path_from, model, optimizer, scheduler)
         logger.info(f"从 {args.checkpoint_path_from} 加载模型权重")
@@ -549,7 +551,7 @@ if __name__ == "__main__":
             model,
             logger,
             save_dir=os.path.join(args.checkpoint_path_to, "generations"),
-            mode="test", 
+            mode="test",
             train_stage=train_stage,
             device="cuda",
             kw_src=args.kw_src,

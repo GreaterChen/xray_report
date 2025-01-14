@@ -548,22 +548,21 @@ class ImpressionGenerator(nn.Module):
         super(ImpressionGenerator, self).__init__()
         self.text_decoder = text_decoder
 
-    def forward(self, F_v_prime, F_t_prime, F_t, target_embed=None):
+    def forward(self, F_v_prime, F_t_prime, F_v, target_embed=None, memory=None):
         """
         Args:
             F_v_prime: 增强的视觉特征 (B, N_v, C_v)
             F_t_prime: 增强的文本特征 (B, N_t, C_t)
-            F_t: 原始的文本特征 (B, N_t, C_t)
+            F_v: 原始的视觉特征 (B, N_v, C_v)
             target_embed: 目标文本的token ids，形状 (B, max_len)
         Returns:
             memory: 拼接后的特征 (B, N_v + 2*N_t, C)
             output: 生成的词汇分布 (B, max_len, vocab_size)
         """
-        # 拼接特征
-        # memory = torch.cat([F_v_prime, F_t_prime, F_t], dim=1)  # (B, N_v + 2*N_t, C)
-        memory = F_t
-
-
+        if memory is None:
+            memory = torch.cat(
+                [F_v, F_v_prime, F_t_prime], dim=1
+            )  # (B, N_v + 2*N_t, C)
 
         # 使用 BLIP_Decoder 进行生成
         logits, _, impression_text, loss_lm = self.text_decoder(memory, target_embed)
@@ -574,6 +573,7 @@ class ImpressionGenerator(nn.Module):
 class HiMrGn(nn.Module):
     def __init__(
         self,
+        args,
         image_encoder,
         history_encoder,
         modality_fusion,
@@ -584,6 +584,7 @@ class HiMrGn(nn.Module):
         cxr_bert_feature_extractor,
     ):
         super().__init__()
+        self.args = args
         self.image_encoder = image_encoder
         self.history_encoder = history_encoder
         self.modality_fusion = modality_fusion
@@ -608,7 +609,6 @@ class HiMrGn(nn.Module):
             history = self.history_encoder(history)
 
             fusion_features = self.modality_fusion(F_v, history)
-            # fusion_features = F_v
 
             logits, F_t, findings_text, loss_lm = self.findings_decoder(
                 F_v=fusion_features,
@@ -627,42 +627,51 @@ class HiMrGn(nn.Module):
             }
 
         elif train_stage == 2:
-            with torch.no_grad():
-                F_v = self.image_encoder(image)  # (B, C)
+            F_v = self.image_encoder(image)  # (B, C)
 
-                history = self.history_encoder(history)
+            history = self.history_encoder(history)
 
-                fusion_features = self.modality_fusion(F_v, history)
-                fusion_features = F_v
+            fusion_features = self.modality_fusion(F_v, history)
 
-                findings_logits, F_t, findings_text, findings_loss = (
-                    self.findings_decoder(
-                        F_v=fusion_features,
-                        target_embed=findings if mode == "train" else None,
+            findings_logits, F_t, findings_text, findings_loss = self.findings_decoder(
+                F_v=fusion_features,
+                target_embed=findings if mode == "train" else None,
+            )
+
+            # F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)、
+            if self.args.CO:
+                F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)
+                memory, impression_logits, impression_text, impression_loss = (
+                    self.impression_decoder(
+                        F_t_prime,
+                        F_v_prime,
+                        F_v,
+                        impression if mode == "train" else None,
+                    )
+                )
+            else:
+                memory = torch.cat([F_v, F_t], dim=1)
+                memory, impression_logits, impression_text, impression_loss = (
+                    self.impression_decoder(
+                        F_t_prime,
+                        F_v_prime,
+                        F_v,
+                        impression if mode == "train" else None,
+                        memory,
                     )
                 )
 
-            # F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)
+            if self.args.CLS:
+                class_logits = self.multi_label_classifier(memory)
+            else:
+                class_logits = None
 
-            memory, impression_logits, impression_text, impression_loss = (
-                self.impression_decoder(
-                    F_t,
-                    F_t,
-                    F_v,
-                    impression if mode == "train" else None,
-                )
-            )
-
-            # class_logits = self.multi_label_classifier(memory)
-            class_logits = None
-
-            F_F = None
-            F_I = None
-
-            # F_F = self.cxr_bert_feature_extractor(findings_text)
-            # F_I = self.cxr_bert_feature_extractor(impression_text)
-
-
+            if self.args.CL:
+                F_F = self.cxr_bert_feature_extractor(findings_text)
+                F_I = self.cxr_bert_feature_extractor(impression_text)
+            else:
+                F_F = None
+                F_I = None
 
             return {
                 "findings_logits": findings_logits,
