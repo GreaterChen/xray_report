@@ -10,7 +10,7 @@ def parse_args():
 
     parser.add_argument(
         "--csv_path",
-        default="/home/chenlb/xray_report_generation/results/resnet/stage2/test_results/test_results_epoch_TEST.csv",
+        default="/home/chenlb/xray_report_generation/test_results_epoch_18.csv",
         type=str,
         help="结果CSV文件的路径",
     )
@@ -27,28 +27,24 @@ def main():
 
     print(f"\n分析文件: {os.path.basename(args.csv_path)}")
 
-    try:
-        results = analyze_results_from_csv(args.csv_path, metric_ftns=compute_scores)
+    results = analyze_results_from_csv(args.csv_path, metric_ftns=compute_scores)
 
-        # 打印Findings指标
-        print("\nFindings Metrics:")
-        for metric_name, value in results["findings_metrics"].items():
+    # 打印Findings指标
+    print("\nFindings Metrics:")
+    for metric_name, value in results["findings_metrics"].items():
+        print(f"{metric_name}: {value:.4f}")
+
+    # 打印Impression指标（如果存在）
+    if results["impression_metrics"]:
+        print("\nImpression Metrics:")
+        for metric_name, value in results["impression_metrics"].items():
             print(f"{metric_name}: {value:.4f}")
 
-        # 打印Impression指标（如果存在）
-        if results["impression_metrics"]:
-            print("\nImpression Metrics:")
-            for metric_name, value in results["impression_metrics"].items():
-                print(f"{metric_name}: {value:.4f}")
-
-        # 打印Combined指标（如果存在）
-        if results["combined_metrics"]:
-            print("\nCombined Metrics:")
-            for metric_name, value in results["combined_metrics"].items():
-                print(f"{metric_name}: {value:.4f}")
-
-    except Exception as e:
-        print(f"处理文件时出错: {str(e)}")
+    # 打印Combined指标（如果存在）
+    if results["combined_metrics"]:
+        print("\nCombined Metrics:")
+        for metric_name, value in results["combined_metrics"].items():
+            print(f"{metric_name}: {value:.4f}")
 
     print("-" * 50)
 

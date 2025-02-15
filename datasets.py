@@ -31,28 +31,13 @@ class MIMIC(data.Dataset):  # MIMIC-CXR Dataset
         "annotation": None,
     }
 
-    source_sections = [
-        "INDICATION:",
-        "HISTORY:",
-        "CLINICAL HISTORY:",
-        "REASON FOR EXAM:",
-        "REASON FOR EXAMINATION:",
-        "CLINICAL INFORMATION:",
-        "CLINICAL INDICATION:",
-        "PATIENT HISTORY:",
-    ]
-    target_sections = ["FINDINGS:", "IMPRESSION:"]
-
     @classmethod
-    def load_shared_data(cls, directory, stage, mode, binary_mode=True):
+    def load_shared_data(cls, directory, ann_dir, stage, mode, binary_mode=True):
         """静态方法，用于加载所有数据集共享的数据"""
         if cls._shared_data["loaded"]:
             return
 
-        annotation_file = os.path.join(
-            directory, "mimic_annotation_promptmrg_new_mrgn.json"
-        )
-        with open(annotation_file, "r") as f:
+        with open(ann_dir, "r") as f:
             annotation_data = json.load(f)
 
         if stage == 1 or mode == "TEST":
@@ -77,6 +62,7 @@ class MIMIC(data.Dataset):  # MIMIC-CXR Dataset
     def __init__(
         self,
         directory,
+        ann_dir,
         input_size=(224, 224),
         random_transform=True,
         train_stage=2,
@@ -85,7 +71,7 @@ class MIMIC(data.Dataset):  # MIMIC-CXR Dataset
         subset_size=None,
     ):
 
-        self.load_shared_data(directory, train_stage, mode)
+        self.load_shared_data(directory, ann_dir, train_stage, mode)
 
         self.tokenizer = tokenizer
         self.bos_token_id = self.tokenizer.bos_token_id

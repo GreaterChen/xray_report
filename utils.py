@@ -564,14 +564,22 @@ def analyze_results_from_csv(csv_path, metric_ftns=None):
         )
 
         # 计算combined (findings + impression)的指标
-        combined_gts = {
-            i: [f"{f} {i}"]
-            for i, (f, i) in enumerate(zip(df["findings_gt"], df["impression_gt"]))
-        }
-        combined_preds = {
-            i: [f"{f} {i}"]
-            for i, (f, i) in enumerate(zip(df["findings_pred"], df["impression_pred"]))
-        }
+        combined_gts = {}
+        combined_preds = {}
+        for i, (f_gt, i_gt, f_pred, i_pred) in enumerate(zip(
+            df["findings_gt"], 
+            df["impression_gt"], 
+            df["findings_pred"], 
+            df["impression_pred"]
+        )):
+            # 只有当impression不为空时才组合
+            if isinstance(i_gt, str) and len(i_gt.strip()) > 0:
+                combined_gts[i] = [f"{f_gt} {i_gt}"]
+                combined_preds[i] = [f"{f_pred} {i_pred}"]
+            else:
+                combined_gts[i] = [f_gt]
+                combined_preds[i] = [f_pred]
+                
         combined_metrics = (
             metric_ftns(combined_gts, combined_preds) if metric_ftns else {}
         )

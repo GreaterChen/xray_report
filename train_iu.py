@@ -52,35 +52,33 @@ def parse_args():
     parser.add_argument(
         "--data_dir",
         type=str,
-        default="/mnt/chenlb/datasets/mimic_cxr/",
+        default="/mnt/chenlb/datasets/iu_ray",
         help="Path to the directory.",
     )
     parser.add_argument(
         "--ann_dir",
         type=str,
-        # default="/mnt/chenlb/datasets/iu_ray/iu_annotation_promptmrg_update_split_with_text_resplit.json",
-        default="/mnt/chenlb/datasets/mimic_cxr/mimic_annotation_promptmrg_new_mrgn.json",
+        default="/mnt/chenlb/datasets/iu_ray/iu_annotation_promptmrg_update_split_with_text_resplit.json",
         help="Path to the annotation file.",
     )
-
     parser.add_argument("--image_size", type=int, default=224, help="Input image size.")
     parser.add_argument(
         "--dataset_name",
         type=str,
-        default="MIMIC",
-        choices=["MIMIC", "NIHCXR", "NLMCXR"],
+        default="IU",
+        choices=["MIMIC", "IU", "NLMCXR"],
         help="Dataset name to use.",
     )
     parser.add_argument(
         "--max_len_findings",
         type=int,
-        default=196,
+        default=60,
         help="Maximum length of the input text.",
     )
     parser.add_argument(
         "--max_len_impression",
         type=int,
-        default=196,
+        default=60,
         help="Maximum length of the input text.",
     )
     parser.add_argument(
@@ -154,7 +152,7 @@ def parse_args():
     parser.add_argument(
         "--mode",
         type=str,
-        default="TEST",
+        default="TRAIN",
         choices=["TRAIN", "TEST"],
         help="Train or Test",
     )
@@ -163,13 +161,13 @@ def parse_args():
         "--train_batch_size", type=int, default=64, help="Batch size for training."
     )
     parser.add_argument(
-        "--val_batch_size", type=int, default=6, help="Batch size for validation."
+        "--val_batch_size", type=int, default=8, help="Batch size for validation."
     )
     parser.add_argument(
         "--num_workers", type=int, default=6, help="Number of workers for training."
     )
     parser.add_argument(
-        "--epochs", type=int, default=50, help="Number of epochs for training."
+        "--epochs", type=int, default=30, help="Number of epochs for training."
     )
     parser.add_argument("--lr", type=float, default=5e-5, help="Learning rate.")
     parser.add_argument(
@@ -205,7 +203,7 @@ def parse_args():
     parser.add_argument(
         "--checkpoint_path_to",
         type=str,
-        default="/home/chenlb/xray_report_generation/results/baseline",
+        default="/home/chenlb/xray_report_generation/results/iu",
         help="Path to save the checkpoint to.",
     )
 
@@ -220,28 +218,31 @@ if __name__ == "__main__":
     os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
     torch.manual_seed(args.seed)
 
+    input_size = (args.image_size, args.image_size)
+
+    tokenizer = BertTokenizer.from_pretrained(
+        "bert-base-uncased", local_files_only=True
+    )
+    tokenizer.add_special_tokens({"bos_token": "[DEC]"})
+    vocab_size = len(tokenizer)
+    pad_id = tokenizer.pad_token_id
+
+    # 设置训练阶段和调试模式
+    train_stage = (
+        1
+        if args.phase == "TRAIN_STAGE_1"
+        else 2 if args.phase == "TRAIN_STAGE_2" else 3
+    )
+
+
     # Dataset-specific settings
     if args.dataset_name == "MIMIC":
-        input_size = (args.image_size, args.image_size)
-
-        tokenizer = BertTokenizer.from_pretrained(
-            "bert-base-uncased", local_files_only=True
-        )
-        tokenizer.add_special_tokens({"bos_token": "[DEC]"})
-        vocab_size = len(tokenizer)
-        pad_id = tokenizer.pad_token_id
-
-        # 设置训练阶段和调试模式
-        train_stage = (
-            1
-            if args.phase == "TRAIN_STAGE_1"
-            else 2 if args.phase == "TRAIN_STAGE_2" else 3
-        )
 
         MIMIC.load_shared_data(args.data_dir, args.ann_dir, train_stage, args.mode)
         # 创建训练、验证和测试数据集
         train_data = MIMIC(
             args.data_dir,
+            args.ann_dir,
             input_size,
             random_transform=True,
             train_stage=train_stage,
@@ -252,6 +253,7 @@ if __name__ == "__main__":
 
         val_data = MIMIC(
             args.data_dir,
+            args.ann_dir,
             input_size,
             random_transform=False,
             train_stage=train_stage,
@@ -262,6 +264,7 @@ if __name__ == "__main__":
 
         test_data = MIMIC(
             args.data_dir,
+            args.ann_dir,
             input_size,
             random_transform=False,
             train_stage=train_stage,
@@ -272,7 +275,41 @@ if __name__ == "__main__":
 
         comment = f"Stage{args.phase}"
     else:
-        raise ValueError("Invalid dataset_name")
+        MIMIC.load_shared_data(args.data_dir, args.ann_dir, train_stage, args.mode)
+        # 创建训练、验证和测试数据集
+        train_data = MIMIC(
+            args.data_dir,
+            args.ann_dir,
+            input_size,
+            random_transform=True,
+            train_stage=train_stage,
+            tokenizer=tokenizer,
+            mode="train",
+            subset_size=200 if args.debug else None,
+        )
+
+        val_data = MIMIC(
+            args.data_dir,
+            args.ann_dir,
+            input_size,
+            random_transform=False,
+            train_stage=train_stage,
+            tokenizer=tokenizer,
+            mode="val",
+            subset_size=10 if args.phase.startswith("TRAIN") else 100,
+        )
+
+        test_data = MIMIC(
+            args.data_dir,
+            args.ann_dir,
+            input_size,
+            random_transform=False,
+            train_stage=train_stage,
+            tokenizer=tokenizer,
+            mode="test",
+            subset_size=10 if args.debug else None,
+        )
+        
 
     # Model-specific settings
     if args.model_name == "HiMrGn":
@@ -396,6 +433,10 @@ if __name__ == "__main__":
         criterion = None
         scaler = torch.cuda.amp.GradScaler()
 
+        if args.checkpoint_path_from:
+            _, _ = load(args.checkpoint_path_from, model, optimizer, scheduler)
+            logger.info(f"从 {args.checkpoint_path_from} 加载模型权重")
+
         for epoch in range(last_epoch + 1, args.epochs):
             print(f"Epoch: {epoch}")
             train_loss = train(
@@ -437,7 +478,7 @@ if __name__ == "__main__":
             # 保存检查点时使用BLEU_1分数
             save_path = os.path.join(
                 args.checkpoint_path_to,
-                f'epoch_{epoch}_BLEU_1_{result["metrics_df"]["BLEU_1"].iloc[0]}.pth',
+                f'epoch_{epoch}_BLEU_1_{result["metrics_df"]["findings_BLEU_1"].iloc[0]}.pth',
             )
             save(
                 save_path,
@@ -451,8 +492,9 @@ if __name__ == "__main__":
 
     elif args.phase == "TRAIN_STAGE_2" and args.mode == "TRAIN":
 
-        _, _ = load(args.checkpoint_path_from, model, optimizer, scheduler)
-        logger.info(f"从 {args.checkpoint_path_from} 加载模型权重")
+        if args.checkpoint_path_from:
+            _, _ = load(args.checkpoint_path_from, model, optimizer, scheduler)
+            logger.info(f"从 {args.checkpoint_path_from} 加载模型权重")
 
         # 冻结指定模块的参数
         for param in model.image_encoder.parameters():
@@ -466,25 +508,6 @@ if __name__ == "__main__":
 
         for param in model.findings_decoder.parameters():
             param.requires_grad = False
-
-        # optimizer = optim.AdamW(
-        #     [
-        #         {"params": model.image_encoder.parameters(), "lr": 1e-7},
-        #         {"params": model.history_encoder.parameters(), "lr": 1e-7},
-        #         {"params": model.modality_fusion.parameters(), "lr": 1e-7},
-        #         {"params": model.findings_decoder.parameters(), "lr": 1e-7},
-        #         {"params": model.multi_label_classifier.parameters()},
-        #         {"params": model.co_attention_module.parameters()},
-        #         {"params": model.impression_decoder.parameters()},
-        #         {"params": model.cxr_bert_feature_extractor.parameters()},
-        #     ],
-        #     lr=args.lr,
-        #     weight_decay=args.wd,
-        # )
-
-        # logger.info(
-        #     "已冻结 image_encoder, history_encoder, modality_fusion, findings_decoder 的参数"
-        # )
 
         criterion = CombinedLoss(pad_id=pad_id).cuda()
         scaler = torch.cuda.amp.GradScaler()

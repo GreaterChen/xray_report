@@ -137,37 +137,16 @@ class BLIP_Decoder(nn.Module):
             eos_token_id=self.tokenizer.sep_token_id,
             pad_token_id=self.tokenizer.pad_token_id,
             repetition_penalty=repetition_penalty,
+            use_cache=True,
+            output_hidden_states=True,
+            return_dict_in_generate=True,
             **model_kwargs
         )
 
-        # 获取生成的序列
-        # generated_tokens = outputs.sequences  # (batch_size, seq_len)
-        generated_tokens = outputs
-        padded_tokens = torch.full(
-            (batch_size, self.max_length), self.tokenizer.pad_token_id, dtype=torch.long
-        ).to(image_embeds.device)
-        for i, tokens in enumerate(generated_tokens):
-            seq_len = len(tokens)
-            padded_tokens[i, :seq_len] = tokens
-        generated_tokens = padded_tokens
+        generated_tokens = outputs.sequences
+        hidden_states = outputs.hidden_states[-1]
 
-        # 使用forward pass获取hidden states
-        attention_mask = (generated_tokens != self.tokenizer.pad_token_id).long()
-        decoder_outputs = self.text_decoder(
-            input_ids=generated_tokens,
-            attention_mask=attention_mask,
-            encoder_hidden_states=image_embeds,
-            encoder_attention_mask=image_atts,
-            output_hidden_states=True,
-            return_dict=True,
-        )
-        hidden_states = decoder_outputs.hidden_states[-1]  # 获取最后一层的hidden states
-
-        # 解码生成的文本
-        captions = []
-        for tokens in generated_tokens:
-            caption = self.tokenizer.decode(tokens, skip_special_tokens=True)
-            captions.append(caption)
+        captions = self.tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
 
         return None, hidden_states, captions
 
@@ -653,8 +632,8 @@ class HiMrGn(nn.Module):
                 memory = torch.cat([F_v, F_t], dim=1)
                 memory, impression_logits, impression_text, impression_loss = (
                     self.impression_decoder(
-                        F_t_prime,
-                        F_v_prime,
+                        F_t,
+                        F_t,
                         F_v,
                         impression if mode == "train" else None,
                         memory,
