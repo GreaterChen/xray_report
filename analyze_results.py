@@ -10,7 +10,7 @@ def parse_args():
 
     parser.add_argument(
         "--csv_path",
-        default="/home/chenlb/xray_report_generation/test_results_epoch_18.csv",
+        default="/home/chenlb/xray_report_generation/results/stage2/cxr_bert/test_results/test_results_epoch_5.csv",
         type=str,
         help="结果CSV文件的路径",
     )

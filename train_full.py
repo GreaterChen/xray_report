@@ -1,3 +1,4 @@
+import json
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -30,16 +31,24 @@ from tools.optims import *
 
 logger = setup_logger(log_dir="logs")
 
+
 # --- Argument Parser ---
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--debug", action="store_true", help="Debug mode.")
-    parser.add_argument("--CLS", action="store_true", help="Classifier.")
-    parser.add_argument("--CO", action="store_true", help="Co-attention.")
-    parser.add_argument("--CL", action="store_true", help="Constrained Learning.")
-    parser.add_argument("--co_num_heads", type=int, default=6, help="Number of heads for co-attention.")
-    parser.add_argument("--co_num_blocks", type=int, default=6, help="Number of blocks for co-attention.")
+    parser.add_argument("--debug", default=False, help="Debug mode.")
+    parser.add_argument("--CLS", default=False, help="Classifier.")
+    parser.add_argument("--CO", default=True, help="Co-attention.")
+    parser.add_argument("--CL", default=False, help="Constrained Learning.")
+    parser.add_argument(
+        "--co_num_heads", type=int, default=1, help="Number of heads for co-attention."
+    )
+    parser.add_argument(
+        "--co_num_blocks",
+        type=int,
+        default=1,
+        help="Number of blocks for co-attention.",
+    )
 
     # Data input settings
     parser.add_argument(
@@ -58,8 +67,8 @@ def parse_args():
     parser.add_argument(
         "--ann_dir",
         type=str,
-        # default="/mnt/chenlb/datasets/iu_ray/iu_annotation_promptmrg_update_split_with_text_resplit.json",
-        default="/mnt/chenlb/datasets/mimic_cxr/mimic_annotation_promptmrg_new_mrgn.json",
+        # default="/mnt/chenlb/datasets/mimic_cxr/mimic_annotation_impression-full.json",
+        default="/mnt/chenlb/datasets/mimic_cxr/mimic_annotation.json",
         help="Path to the annotation file.",
     )
 
@@ -74,13 +83,13 @@ def parse_args():
     parser.add_argument(
         "--max_len_findings",
         type=int,
-        default=196,
+        default=100,
         help="Maximum length of the input text.",
     )
     parser.add_argument(
         "--max_len_impression",
         type=int,
-        default=196,
+        default=100,
         help="Maximum length of the input text.",
     )
     parser.add_argument(
@@ -154,7 +163,7 @@ def parse_args():
     parser.add_argument(
         "--mode",
         type=str,
-        default="TEST",
+        default="TRAIN",
         choices=["TRAIN", "TEST"],
         help="Train or Test",
     )
@@ -163,24 +172,24 @@ def parse_args():
         "--train_batch_size", type=int, default=64, help="Batch size for training."
     )
     parser.add_argument(
-        "--val_batch_size", type=int, default=6, help="Batch size for validation."
+        "--val_batch_size", type=int, default=4, help="Batch size for validation."
     )
     parser.add_argument(
         "--num_workers", type=int, default=6, help="Number of workers for training."
     )
     parser.add_argument(
-        "--epochs", type=int, default=50, help="Number of epochs for training."
+        "--epochs", type=int, default=20, help="Number of epochs for training."
     )
-    parser.add_argument("--lr", type=float, default=5e-5, help="Learning rate.")
+    parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate.")
     parser.add_argument(
         "--min_lr", type=float, default=5e-6, help="Minimum learning rate."
     )
     parser.add_argument(
-        "--warmup_lr", type=float, default=5e-7, help="Warmup learning rate."
+        "--warmup_lr", type=float, default=5e-6, help="Warmup learning rate."
     )
     parser.add_argument("--warmup_steps", type=int, default=2000, help="Warmup steps.")
     parser.add_argument(
-        "--wd", type=float, default=0.05, help="Weight decay (L2 regularization)."
+        "--wd", type=float, default=0.01, help="Weight decay (L2 regularization)."
     )
     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate.")
 
@@ -199,24 +208,40 @@ def parse_args():
     parser.add_argument(
         "--checkpoint_path_from",
         type=str,
-        default="/home/chenlb/xray_report_generation/results/resnet/stage1/epoch_19_BLEU_1_0.41520361597936345.pth",
+        default="/home/chenlb/xray_report_generation/results/stage1/49visual_extend/epoch_12_BLEU_1_0.3919511280957931.pth",
+        # default="/home/chenlb/xray_report_generation/results/stage1/49visual/epoch_8_BLEU_1_0.3736232743510843.pth",
+        # default="/home/chenlb/xray_report_generation/results/stage2/cxr_bert/epoch_8_BLEU_1_0.19664481187635488.pth",
         help="Path to load the checkpoint from.",
     )
     parser.add_argument(
         "--checkpoint_path_to",
         type=str,
-        default="/home/chenlb/xray_report_generation/results/baseline",
+        default="/home/chenlb/xray_report_generation/results/stage1/49visual_extend2",
         help="Path to save the checkpoint to.",
     )
+    args = parser.parse_args()
 
-    return parser.parse_args()
+    # Convert args to dictionary
+    args_dict = vars(args)
+
+    # Create save path
+    from pathlib import Path
+
+    save_dir = Path(args.checkpoint_path_to)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    save_path = save_dir / "args_config.json"
+
+    # Save to JSON file
+    with open(save_path, "w") as f:
+        json.dump(args_dict, f, indent=4)
+
+    return args
 
 
 # --- Main Program ---
 if __name__ == "__main__":
     args = parse_args()
 
-    # Set environment variables
     os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
     torch.manual_seed(args.seed)
 
@@ -278,7 +303,6 @@ if __name__ == "__main__":
     if args.model_name == "HiMrGn":
 
         resnet101 = ResNet101()
-        vit = ViTFeatureExtractor(model_name="vit_base_patch16_224", pretrained=True)
 
         history_encoder = HistoryEncoder(args)
 
@@ -289,7 +313,9 @@ if __name__ == "__main__":
         )
         findings_generator = FindingsGenerator(findings_decoder)
 
-        co_attention_module = CoAttentionModule(embed_dim=768, num_heads=args.co_num_heads, num_blocks=args.co_num_blocks)
+        co_attention_module = CoAttentionModule(
+            embed_dim=768, num_heads=args.co_num_heads, num_blocks=args.co_num_blocks
+        )
         multi_label_classifier = MultiLabelClassifier(input_dim=768, hidden_dim=384)
 
         impression_decoder = BLIP_Decoder(
@@ -393,6 +419,9 @@ if __name__ == "__main__":
 
     # Training phase
     if args.phase == "TRAIN_STAGE_1" and args.mode == "TRAIN":
+        if args.checkpoint_path_from:
+            _, _ = load(args.checkpoint_path_from, model, optimizer, scheduler)
+
         criterion = None
         scaler = torch.cuda.amp.GradScaler()
 
@@ -437,7 +466,7 @@ if __name__ == "__main__":
             # 保存检查点时使用BLEU_1分数
             save_path = os.path.join(
                 args.checkpoint_path_to,
-                f'epoch_{epoch}_BLEU_1_{result["metrics_df"]["BLEU_1"].iloc[0]}.pth',
+                f'epoch_{epoch}_BLEU_1_{result["metrics_df"]["findings_BLEU_1"].iloc[0]}.pth',
             )
             save(
                 save_path,
@@ -453,6 +482,8 @@ if __name__ == "__main__":
 
         _, _ = load(args.checkpoint_path_from, model, optimizer, scheduler)
         logger.info(f"从 {args.checkpoint_path_from} 加载模型权重")
+
+        # model.impression_decoder.load_state_dict(model.findings_decoder.state_dict())
 
         # 冻结指定模块的参数
         for param in model.image_encoder.parameters():
@@ -482,9 +513,9 @@ if __name__ == "__main__":
         #     weight_decay=args.wd,
         # )
 
-        # logger.info(
-        #     "已冻结 image_encoder, history_encoder, modality_fusion, findings_decoder 的参数"
-        # )
+        logger.info(
+            "已冻结 image_encoder, history_encoder, modality_fusion, findings_decoder 的参数"
+        )
 
         criterion = CombinedLoss(pad_id=pad_id).cuda()
         scaler = torch.cuda.amp.GradScaler()

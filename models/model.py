@@ -106,8 +106,7 @@ class BLIP_Decoder(nn.Module):
         self,
         image_embeds,
         sample=False,
-        num_beams=3,
-        min_length=100,
+        num_beams=1,
         top_p=0.9,
         repetition_penalty=1.0,
     ):
@@ -131,22 +130,43 @@ class BLIP_Decoder(nn.Module):
         # 生成文本
         outputs = self.text_decoder.generate(
             input_ids=input_ids,
-            # min_length=min_length,
             max_new_tokens=self.max_length - 1,
             num_beams=num_beams,
             eos_token_id=self.tokenizer.sep_token_id,
             pad_token_id=self.tokenizer.pad_token_id,
             repetition_penalty=repetition_penalty,
-            use_cache=True,
-            output_hidden_states=True,
-            return_dict_in_generate=True,
             **model_kwargs
         )
 
-        generated_tokens = outputs.sequences
-        hidden_states = outputs.hidden_states[-1]
+        # 获取生成的序列
+        # generated_tokens = outputs.sequences  # (batch_size, seq_len)
+        generated_tokens = outputs
+        padded_tokens = torch.full(
+            (batch_size, self.max_length), self.tokenizer.pad_token_id, dtype=torch.long
+        ).to(image_embeds.device)
+        for i, tokens in enumerate(generated_tokens):
+            seq_len = len(tokens)
+            padded_tokens[i, :seq_len] = tokens
+        generated_tokens = padded_tokens
 
-        captions = self.tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+        # 使用forward pass获取hidden states
+        attention_mask = (generated_tokens != self.tokenizer.pad_token_id).long()
+
+        decoder_outputs = self.text_decoder(
+            input_ids=generated_tokens,
+            attention_mask=attention_mask,
+            encoder_hidden_states=image_embeds,
+            encoder_attention_mask=image_atts,
+            output_hidden_states=True,
+            return_dict=True,
+        )
+        hidden_states = decoder_outputs.hidden_states[-1]  # 获取最后一层的hidden states
+
+        # 解码生成的文本
+        captions = []
+        for tokens in generated_tokens:
+            caption = self.tokenizer.decode(tokens, skip_special_tokens=True)
+            captions.append(caption)
 
         return None, hidden_states, captions
 
@@ -157,14 +177,14 @@ class ResNet101(nn.Module):
         model = getattr(models, "resnet101")(
             weights=models.ResNet101_Weights.IMAGENET1K_V1
         )
-        modules = list(model.children())[:-3]
+        modules = list(model.children())[:-2]
         self.model = nn.Sequential(*modules)
 
         # 添加线性映射层，将1024维降到768维
         self.dim_reduction = nn.Sequential(
-            nn.Linear(1024, 512),  # 降到中间的低维度
+            nn.Linear(2048, 1024),  # 降到中间的低维度
             nn.ReLU(),  # 非线性激活
-            nn.Linear(512, 768),  # 再升到目标维度
+            nn.Linear(1024, 768),  # 再升到目标维度
         )
 
     def forward(self, x):
@@ -246,38 +266,6 @@ class CXR_BERT_FeatureExtractor(nn.Module):
             cls_embeddings = outputs.last_hidden_state[:, 0, :]
 
         return cls_embeddings
-
-
-class ViTFeatureExtractor(nn.Module):
-    def __init__(self, model_name="vit_base_patch16_224", pretrained=True):
-        super().__init__()
-
-        self.image_encoder = create_model(model_name, pretrained=pretrained)
-
-    def forward(self, image):
-        """
-        image: 输入的图像，形状为 (B, C, H, W)
-        返回:
-        features: ViT最后一层的输出特征，形状为 (B, 768)
-        """
-        # 获取ViT最后一层[CLS] token的输出
-        features = self.image_encoder.forward_features(image)
-
-        return features
-
-
-class ViTAdapter(nn.Module):
-    def __init__(self, vit_dim=768, decoder_dim=768):
-        super().__init__()
-        self.linear = nn.Linear(vit_dim, decoder_dim)
-        self.layer_norm = nn.LayerNorm(decoder_dim)
-
-    def forward(self, x):
-        # x shape: [batch_size, 197, vit_dim]
-        x = self.linear(x)
-        x = self.layer_norm(x)
-        return x
-
 
 class ModalityFusion(nn.Module):
     def __init__(
@@ -424,20 +412,23 @@ class CoAttentionBlock(nn.Module):
         F_v2, _ = self.cross_attn_text_to_visual(F_v1, F_t1, F_t1)  # 视觉 -> 文本
         F_v2 = self.norm_visual2(F_v1 + F_v2)  # 残差连接 + 归一化
 
-        # Step 3: 非对称 Cross-Attention
-        F_t3, _ = self.cross_attn_asym_text(
-            F_t2, F_t2, F_v2
-        )  # Query 和 Key 是文本，Value 是视觉
-        F_t3 = self.norm_text3(F_t2 + F_t3)  # 残差连接 + 归一化
+        # # Step 3: 非对称 Cross-Attention
+        # F_t3, _ = self.cross_attn_asym_text(
+        #     F_t2, F_t2, F_v2
+        # )  # Query 和 Key 是文本，Value 是视觉
+        # F_t3 = self.norm_text3(F_t2 + F_t3)  # 残差连接 + 归一化
 
-        F_v3, _ = self.cross_attn_asym_visual(
-            F_v2, F_v2, F_t2
-        )  # Query 和 Key 是视觉，Value 是文本
-        F_v3 = self.norm_visual3(F_v2 + F_v3)  # 残差连接 + 归一化
+        # F_v3, _ = self.cross_attn_asym_visual(
+        #     F_v2, F_v2, F_t2
+        # )  # Query 和 Key 是视觉，Value 是文本
+        # F_v3 = self.norm_visual3(F_v2 + F_v3)  # 残差连接 + 归一化
 
-        # 转回 (B, seq_len, embed_dim) 格式
-        F_t3 = F_t3.transpose(0, 1)  # (B, N_t, C_t)
-        F_v3 = F_v3.transpose(0, 1)  # (B, N_v, C_v)
+        # # 转回 (B, seq_len, embed_dim) 格式
+        # F_t3 = F_t3.transpose(0, 1)  # (B, N_t, C_t)
+        # F_v3 = F_v3.transpose(0, 1)  # (B, N_v, C_v)
+
+        F_t3 = F_t2.transpose(0, 1)  # (B, N_t, C_t)
+        F_v3 = F_v2.transpose(0, 1)  # (B, N_v, C_v)
 
         return F_t3, F_v3
 
@@ -561,6 +552,7 @@ class HiMrGn(nn.Module):
         co_attention_module,
         impression_decoder,
         cxr_bert_feature_extractor,
+
     ):
         super().__init__()
         self.args = args
@@ -579,6 +571,7 @@ class HiMrGn(nn.Module):
         findings=None,
         impression=None,
         history=None,
+        findings_gt=None,
         train_stage=2,
         mode="train",
     ):
@@ -617,15 +610,20 @@ class HiMrGn(nn.Module):
                 target_embed=findings if mode == "train" else None,
             )
 
+            F_F = self.cxr_bert_feature_extractor(findings_text)
+            F_F = F_F.unsqueeze(1)
+
             # F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)、
             if self.args.CO:
-                F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)
+                F_t_prime, F_v_prime = self.co_attention_module(F_F, F_v)
+                memory = torch.cat([F_t_prime, F_v_prime], dim=1)
                 memory, impression_logits, impression_text, impression_loss = (
                     self.impression_decoder(
                         F_t_prime,
                         F_v_prime,
                         F_v,
                         impression if mode == "train" else None,
+                        memory=memory,
                     )
                 )
             else:

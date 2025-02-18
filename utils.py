@@ -1,3 +1,4 @@
+import re
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -175,6 +176,7 @@ def train(
 
     prog_bar = tqdm(data_loader)
     for i, batch in enumerate(prog_bar):
+        findings_gt = batch['findings']
         # 准备批次数据
         source, target, _ = prepare_batch_data(args, batch, data_loader, device)
 
@@ -184,6 +186,8 @@ def train(
 
         source["train_stage"] = train_stage
         source["mode"] = "train"
+        source['findings_gt'] = findings_gt
+
 
         scheduler.step(cur_epoch=current_epoch, cur_step=i)
         current_lr = optimizer.param_groups[0]["lr"]
@@ -282,9 +286,10 @@ def test(
                 impression_preds_list.extend([re for re in output["impression_text"]])
 
             # 记录日志
-            logger.info(f"findings_preds: {output['findings_text'][0]}")
+            # logger.info(f"findings_preds: {output['findings_text'][0]}")
             if train_stage == 2:
                 logger.info(f"impression_preds: {output['impression_text'][0]}")
+                logger.info(f"impression_gt: {impression_gts_list[0]}")
 
             # 计算损失
             if criterion is not None:
@@ -395,7 +400,17 @@ def load(path, model, optimizer=None, scheduler=None):
     epoch = checkpoint["epoch"]
     stats = checkpoint["stats"]
     # --- Model Parameters ---
-    model.load_state_dict(checkpoint["model_state_dict"])
+    # model.load_state_dict(checkpoint["model_state_dict"])
+    missing_keys, unexpected_keys = model.load_state_dict(
+        checkpoint["model_state_dict"], strict=False
+    )
+
+    # 打印未加载和多余的参数信息
+    if len(missing_keys) > 0:
+        print(f"Missing keys: {missing_keys}")
+    if len(unexpected_keys) > 0:
+        print(f"Unexpected keys: {unexpected_keys}")
+
     if optimizer != None:
         try:
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -525,6 +540,62 @@ def setup_logger(log_dir="logs"):
     return logger
 
 
+def clean_report_mimic_cxr(report):
+    report_cleaner = (
+        lambda t: t.replace("\n", " ")
+        .replace("__", "_")
+        .replace("__", "_")
+        .replace("__", "_")
+        .replace("__", "_")
+        .replace("__", "_")
+        .replace("__", "_")
+        .replace("__", "_")
+        .replace("  ", " ")
+        .replace("  ", " ")
+        .replace("  ", " ")
+        .replace("  ", " ")
+        .replace("  ", " ")
+        .replace("  ", " ")
+        .replace("..", ".")
+        .replace("..", ".")
+        .replace("..", ".")
+        .replace("..", ".")
+        .replace("..", ".")
+        .replace("..", ".")
+        .replace("..", ".")
+        .replace("..", ".")
+        .replace("1. ", "")
+        .replace(". 2. ", ". ")
+        .replace(". 3. ", ". ")
+        .replace(". 4. ", ". ")
+        .replace(". 5. ", ". ")
+        .replace(" 2. ", ". ")
+        .replace(" 3. ", ". ")
+        .replace(" 4. ", ". ")
+        .replace(" 5. ", ". ")
+        .strip()
+        .lower()
+        .split(". ")
+    )
+    sent_cleaner = lambda t: re.sub(
+        "[.,?;*!%^&_+():-\[\]{}]",
+        "",
+        t.replace('"', "")
+        .replace("/", "")
+        .replace("\\", "")
+        .replace("'", "")
+        .strip()
+        .lower(),
+    )
+    tokens = [
+        sent_cleaner(sent)
+        for sent in report_cleaner(report)
+        if sent_cleaner(sent) != []
+    ]
+    report = " . ".join(tokens) + " ."
+    return report
+
+
 def analyze_results_from_csv(csv_path, metric_ftns=None):
     """从CSV文件中分析结果并计算评估指标，包括findings、impression以及它们的组合
 
@@ -557,8 +628,19 @@ def analyze_results_from_csv(csv_path, metric_ftns=None):
     # 如果存在impression相关列，计算impression和combined的指标
     if "impression_gt" in df.columns and "impression_pred" in df.columns:
         # 计算impression的指标
-        impression_gts = {i: [gt] for i, gt in enumerate(df["impression_gt"])}
-        impression_preds = {i: [pred] for i, pred in enumerate(df["impression_pred"])}
+        impression_gts = {}
+        impression_preds = {}
+        idx = 0
+        for i in range(len(df)):
+            if (
+                df["impression_gt"][i].strip() != ""
+                and df["impression_pred"][i].strip() != ""
+            ):
+                impression_gts[idx] = [df["impression_gt"][i]]
+                impression_preds[idx] = [df["impression_pred"][i].replace(".", " .")]
+                idx += 1
+        # impression_gts = {i: [gt] for i, gt in enumerate(df["impression_gt"])}
+        # impression_preds = {i: [pred] for i, pred in enumerate(df["impression_pred"])}
         impression_metrics = (
             metric_ftns(impression_gts, impression_preds) if metric_ftns else {}
         )
@@ -566,12 +648,14 @@ def analyze_results_from_csv(csv_path, metric_ftns=None):
         # 计算combined (findings + impression)的指标
         combined_gts = {}
         combined_preds = {}
-        for i, (f_gt, i_gt, f_pred, i_pred) in enumerate(zip(
-            df["findings_gt"], 
-            df["impression_gt"], 
-            df["findings_pred"], 
-            df["impression_pred"]
-        )):
+        for i, (f_gt, i_gt, f_pred, i_pred) in enumerate(
+            zip(
+                df["findings_gt"],
+                df["impression_gt"],
+                df["findings_pred"],
+                df["impression_pred"],
+            )
+        ):
             # 只有当impression不为空时才组合
             if isinstance(i_gt, str) and len(i_gt.strip()) > 0:
                 combined_gts[i] = [f"{f_gt} {i_gt}"]
@@ -579,7 +663,7 @@ def analyze_results_from_csv(csv_path, metric_ftns=None):
             else:
                 combined_gts[i] = [f_gt]
                 combined_preds[i] = [f_pred]
-                
+
         combined_metrics = (
             metric_ftns(combined_gts, combined_preds) if metric_ftns else {}
         )

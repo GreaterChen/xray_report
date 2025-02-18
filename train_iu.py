@@ -30,6 +30,7 @@ from tools.optims import *
 
 logger = setup_logger(log_dir="logs")
 
+
 # --- Argument Parser ---
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -38,8 +39,15 @@ def parse_args():
     parser.add_argument("--CLS", action="store_true", help="Classifier.")
     parser.add_argument("--CO", action="store_true", help="Co-attention.")
     parser.add_argument("--CL", action="store_true", help="Constrained Learning.")
-    parser.add_argument("--co_num_heads", type=int, default=6, help="Number of heads for co-attention.")
-    parser.add_argument("--co_num_blocks", type=int, default=6, help="Number of blocks for co-attention.")
+    parser.add_argument(
+        "--co_num_heads", type=int, default=6, help="Number of heads for co-attention."
+    )
+    parser.add_argument(
+        "--co_num_blocks",
+        type=int,
+        default=6,
+        help="Number of blocks for co-attention.",
+    )
 
     # Data input settings
     parser.add_argument(
@@ -234,7 +242,6 @@ if __name__ == "__main__":
         else 2 if args.phase == "TRAIN_STAGE_2" else 3
     )
 
-
     # Dataset-specific settings
     if args.dataset_name == "MIMIC":
 
@@ -309,7 +316,6 @@ if __name__ == "__main__":
             mode="test",
             subset_size=10 if args.debug else None,
         )
-        
 
     # Model-specific settings
     if args.model_name == "HiMrGn":
@@ -326,7 +332,9 @@ if __name__ == "__main__":
         )
         findings_generator = FindingsGenerator(findings_decoder)
 
-        co_attention_module = CoAttentionModule(embed_dim=768, num_heads=args.co_num_heads, num_blocks=args.co_num_blocks)
+        co_attention_module = CoAttentionModule(
+            embed_dim=768, num_heads=args.co_num_heads, num_blocks=args.co_num_blocks
+        )
         multi_label_classifier = MultiLabelClassifier(input_dim=768, hidden_dim=384)
 
         impression_decoder = BLIP_Decoder(
