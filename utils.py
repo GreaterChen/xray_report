@@ -131,7 +131,7 @@ def prepare_batch_data(args, batch, data_loader, device):
             ).to(
                 device
             )  # [batch_size, max_len]
-            encoded.input_ids[:, 0] = data_loader.dataset.tokenizer.bos_token_id
+            # encoded.input_ids[:, 0] = data_loader.dataset.tokenizer.bos_token_id
             batch[field] = encoded
 
     # 将label移到device上
@@ -176,7 +176,7 @@ def train(
 
     prog_bar = tqdm(data_loader)
     for i, batch in enumerate(prog_bar):
-        findings_gt = batch['findings']
+        findings_gt = batch["findings"]
         # 准备批次数据
         source, target, _ = prepare_batch_data(args, batch, data_loader, device)
 
@@ -186,8 +186,7 @@ def train(
 
         source["train_stage"] = train_stage
         source["mode"] = "train"
-        source['findings_gt'] = findings_gt
-
+        source["findings_gt"] = findings_gt
 
         scheduler.step(cur_epoch=current_epoch, cur_step=i)
         current_lr = optimizer.param_groups[0]["lr"]
@@ -200,7 +199,7 @@ def train(
                     loss = output["loss_lm"]
                 else:
                     loss, _ = criterion(output, target)
-                    loss = loss + output["impression_loss"] + output["findings_loss"]
+                    loss = loss + output["impression_loss"]
 
             running_loss += loss.item()
             prog_bar.set_description(f"Loss: {running_loss/(i+1)} | LR: {current_lr}")
@@ -287,9 +286,9 @@ def test(
 
             # 记录日志
             # logger.info(f"findings_preds: {output['findings_text'][0]}")
-            if train_stage == 2:
-                logger.info(f"impression_preds: {output['impression_text'][0]}")
-                logger.info(f"impression_gt: {impression_gts_list[0]}")
+            # if train_stage == 2:
+            #     logger.info(f"impression_preds: {output['impression_text'][0]}")
+            # logger.info(f"impression_gt: {batch['gts'][1][0]}")
 
             # 计算损失
             if criterion is not None:

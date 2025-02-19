@@ -42,7 +42,7 @@ class BLIP_Decoder(nn.Module):
 
         # 初始化解码器
         self.text_decoder = BertLMHeadModel.from_pretrained(
-            "bert-base-uncased", config=decoder_config
+            "bert-base-uncased", config=decoder_config, local_files_only=True
         )
 
         # 调整词表大小
@@ -68,9 +68,9 @@ class BLIP_Decoder(nn.Module):
             )
 
             # mask掉CLS位置
-            decoder_targets = decoder_inputs.masked_fill(
-                decoder_inputs == self.tokenizer.bos_token_id, -100
-            )
+            # decoder_targets = decoder_inputs.masked_fill(
+            #     decoder_inputs == self.tokenizer.bos_token_id, -100
+            # )
 
             # 前向传播
             outputs = self.text_decoder(
@@ -125,7 +125,8 @@ class BLIP_Decoder(nn.Module):
         input_ids = torch.ones((batch_size, 1), dtype=torch.long).to(
             image_embeds.device
         )
-        input_ids[:, 0] = self.tokenizer.bos_token_id
+        # input_ids[:, 0] = self.tokenizer.bos_token_id
+        input_ids[:, 0] = self.tokenizer.cls_token_id
 
         # 生成文本
         outputs = self.text_decoder.generate(
@@ -170,6 +171,35 @@ class BLIP_Decoder(nn.Module):
 
         return None, hidden_states, captions
 
+    def get_text_embeddings(self, texts):
+        """
+        获取文本的token embedding表示
+
+        Args:
+            texts: 文本字符串或文本字符串列表
+
+        Returns:
+            embeddings: token的嵌入表示 (batch_size, max_len, hidden_dim)
+        """
+        if isinstance(texts, list) and isinstance(texts[0], str):
+            device = self.text_decoder.bert.embeddings.word_embeddings.weight.device
+            # tokenization
+            encoded = self.tokenizer(
+                texts,
+                max_length=self.max_length,
+                padding="max_length",
+                truncation=True,
+                return_tensors="pt",
+            ).to(device)
+        else:
+            encoded = texts
+
+        # 获取embeddings
+        embeddings = self.text_decoder.bert.embeddings.word_embeddings(
+            encoded.input_ids
+        )
+        return embeddings
+
 
 class ResNet101(nn.Module):
     def __init__(self):
@@ -177,14 +207,14 @@ class ResNet101(nn.Module):
         model = getattr(models, "resnet101")(
             weights=models.ResNet101_Weights.IMAGENET1K_V1
         )
-        modules = list(model.children())[:-2]
+        modules = list(model.children())[:-3]
         self.model = nn.Sequential(*modules)
 
         # 添加线性映射层，将1024维降到768维
         self.dim_reduction = nn.Sequential(
-            nn.Linear(2048, 1024),  # 降到中间的低维度
+            nn.Linear(1024, 512),  # 降到中间的低维度
             nn.ReLU(),  # 非线性激活
-            nn.Linear(1024, 768),  # 再升到目标维度
+            nn.Linear(512, 768),  # 再升到目标维度
         )
 
     def forward(self, x):
@@ -235,10 +265,10 @@ class CXR_BERT_FeatureExtractor(nn.Module):
         self.device = device
         # 加载预训练的 CXR-BERT 模型和对应的分词器
         self.tokenizer = AutoTokenizer.from_pretrained(
-            "microsoft/BiomedVLP-CXR-BERT-specialized", trust_remote_code=True
+            "microsoft/BiomedVLP-CXR-BERT-specialized", trust_remote_code=True, local_files_only=True
         )
         self.model = AutoModel.from_pretrained(
-            "microsoft/BiomedVLP-CXR-BERT-specialized", trust_remote_code=True
+            "microsoft/BiomedVLP-CXR-BERT-specialized", trust_remote_code=True, local_files_only=True
         ).to(self.device)
 
         # Freeze all parameters in the BERT model
@@ -266,6 +296,7 @@ class CXR_BERT_FeatureExtractor(nn.Module):
             cls_embeddings = outputs.last_hidden_state[:, 0, :]
 
         return cls_embeddings
+
 
 class ModalityFusion(nn.Module):
     def __init__(
@@ -552,7 +583,6 @@ class HiMrGn(nn.Module):
         co_attention_module,
         impression_decoder,
         cxr_bert_feature_extractor,
-
     ):
         super().__init__()
         self.args = args
@@ -601,22 +631,29 @@ class HiMrGn(nn.Module):
         elif train_stage == 2:
             F_v = self.image_encoder(image)  # (B, C)
 
-            history = self.history_encoder(history)
 
-            fusion_features = self.modality_fusion(F_v, history)
+            if mode != "train":
+                history = self.history_encoder(history)
 
-            findings_logits, F_t, findings_text, findings_loss = self.findings_decoder(
-                F_v=fusion_features,
-                target_embed=findings if mode == "train" else None,
+                fusion_features = self.modality_fusion(F_v, history)
+
+                findings_logits, F_t, findings_text, findings_loss = self.findings_decoder(
+                    F_v=fusion_features,
+                    target_embed=findings if mode == "train" else None,
+                )
+            else:
+                findings_logits = None
+                F_t = None
+                findings_text = None
+                findings_loss = torch.tensor(0.0)
+
+            F_F = self.impression_decoder.text_decoder.get_text_embeddings(
+                findings if mode == "train" else findings_text
             )
 
-            F_F = self.cxr_bert_feature_extractor(findings_text)
-            F_F = F_F.unsqueeze(1)
-
-            # F_t_prime, F_v_prime = self.co_attention_module(F_t, F_v)、
             if self.args.CO:
                 F_t_prime, F_v_prime = self.co_attention_module(F_F, F_v)
-                memory = torch.cat([F_t_prime, F_v_prime], dim=1)
+                memory = torch.cat([F_v, F_t_prime, F_v_prime], dim=1)
                 memory, impression_logits, impression_text, impression_loss = (
                     self.impression_decoder(
                         F_t_prime,

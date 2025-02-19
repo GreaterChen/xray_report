@@ -321,7 +321,7 @@ if __name__ == "__main__":
     if args.model_name == "HiMrGn":
 
         resnet101 = ResNet101()
-        vit = ViTFeatureExtractor(model_name="vit_base_patch16_224", pretrained=True)
+        # vit = ViTFeatureExtractor(model_name="vit_base_patch16_224", pretrained=True)
 
         history_encoder = HistoryEncoder(args)
 

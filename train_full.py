@@ -67,8 +67,8 @@ def parse_args():
     parser.add_argument(
         "--ann_dir",
         type=str,
-        # default="/mnt/chenlb/datasets/mimic_cxr/mimic_annotation_impression-full.json",
-        default="/mnt/chenlb/datasets/mimic_cxr/mimic_annotation.json",
+        default="/mnt/chenlb/datasets/mimic_cxr/mimic_annotation_impression-full.json",
+        # default="/mnt/chenlb/datasets/mimic_cxr/mimic_annotation.json",
         help="Path to the annotation file.",
     )
 
@@ -83,7 +83,7 @@ def parse_args():
     parser.add_argument(
         "--max_len_findings",
         type=int,
-        default=100,
+        default=196,
         help="Maximum length of the input text.",
     )
     parser.add_argument(
@@ -154,8 +154,8 @@ def parse_args():
     parser.add_argument(
         "--phase",
         type=str,
-        default="TRAIN_STAGE_1",
-        choices=["TRAIN_STAGE_1", "TRAIN_STAGE_2", "TEST", "INFER"],
+        default="TRAIN_STAGE_3",
+        choices=["TRAIN_STAGE_1", "TRAIN_STAGE_2", "TRAIN_STAGE_3", "TEST", "INFER"],
         help="Phase of the program",
     )
 
@@ -180,7 +180,7 @@ def parse_args():
     parser.add_argument(
         "--epochs", type=int, default=20, help="Number of epochs for training."
     )
-    parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate.")
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate.")
     parser.add_argument(
         "--min_lr", type=float, default=5e-6, help="Minimum learning rate."
     )
@@ -208,7 +208,8 @@ def parse_args():
     parser.add_argument(
         "--checkpoint_path_from",
         type=str,
-        default="/home/chenlb/xray_report_generation/results/stage1/49visual_extend/epoch_12_BLEU_1_0.3919511280957931.pth",
+        # default="/home/chenlb/xray_report_generation/results/stage1/49visual_extend/epoch_12_BLEU_1_0.3919511280957931.pth",
+        default="/home/chenlb/xray_report_generation/results/resnet/stage1/epoch_19_BLEU_1_0.41520361597936345.pth",
         # default="/home/chenlb/xray_report_generation/results/stage1/49visual/epoch_8_BLEU_1_0.3736232743510843.pth",
         # default="/home/chenlb/xray_report_generation/results/stage2/cxr_bert/epoch_8_BLEU_1_0.19664481187635488.pth",
         help="Path to load the checkpoint from.",
@@ -216,7 +217,7 @@ def parse_args():
     parser.add_argument(
         "--checkpoint_path_to",
         type=str,
-        default="/home/chenlb/xray_report_generation/results/stage1/49visual_extend2",
+        default="/home/chenlb/xray_report_generation/results/stage2/test_cls",
         help="Path to save the checkpoint to.",
     )
     args = parser.parse_args()
@@ -498,6 +499,10 @@ if __name__ == "__main__":
         for param in model.findings_decoder.parameters():
             param.requires_grad = False
 
+        logger.info(
+            "已冻结 image_encoder, history_encoder, modality_fusion, findings_decoder 的参数"
+        )
+
         # optimizer = optim.AdamW(
         #     [
         #         {"params": model.image_encoder.parameters(), "lr": 1e-7},
@@ -513,9 +518,7 @@ if __name__ == "__main__":
         #     weight_decay=args.wd,
         # )
 
-        logger.info(
-            "已冻结 image_encoder, history_encoder, modality_fusion, findings_decoder 的参数"
-        )
+
 
         criterion = CombinedLoss(pad_id=pad_id).cuda()
         scaler = torch.cuda.amp.GradScaler()
