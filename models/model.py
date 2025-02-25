@@ -24,13 +24,11 @@ class BLIP_Decoder(nn.Module):
         tokenizer,
         hidden_dim=768,
         max_length=196,
-        prompt="",
     ):
         super().__init__()
 
         self.tokenizer = tokenizer
         self.hidden_dim = hidden_dim
-        self.prompt = prompt
         self.max_length = max_length
         # 加载BERT配置
         decoder_config = BertConfig.from_json_file(
@@ -106,7 +104,7 @@ class BLIP_Decoder(nn.Module):
         self,
         image_embeds,
         sample=False,
-        num_beams=1,
+        num_beams=3,
         top_p=0.9,
         repetition_penalty=1.0,
     ):
@@ -136,6 +134,7 @@ class BLIP_Decoder(nn.Module):
             eos_token_id=self.tokenizer.sep_token_id,
             pad_token_id=self.tokenizer.pad_token_id,
             repetition_penalty=repetition_penalty,
+            top_p=top_p,
             **model_kwargs
         )
 
@@ -186,7 +185,7 @@ class BLIP_Decoder(nn.Module):
             # tokenization
             encoded = self.tokenizer(
                 texts,
-                max_length=self.max_length,
+                max_length=196,
                 padding="max_length",
                 truncation=True,
                 return_tensors="pt",
@@ -226,6 +225,8 @@ class ResNet101(nn.Module):
             0, 2, 1
         )  # (batch_size, 196, 1024)
         patch_feats = self.dim_reduction(patch_feats)  # (batch_size, 196, 768)
+
+        patch_feats = F.normalize(patch_feats, p=2, dim=-1)
 
         return patch_feats
 
@@ -632,20 +633,91 @@ class HiMrGn(nn.Module):
             F_v = self.image_encoder(image)  # (B, C)
 
 
-            if mode != "train":
-                history = self.history_encoder(history)
+            # if mode != "train":
+            #     history = self.history_encoder(history)
 
-                fusion_features = self.modality_fusion(F_v, history)
+            #     fusion_features = self.modality_fusion(F_v, history)
 
-                findings_logits, F_t, findings_text, findings_loss = self.findings_decoder(
-                    F_v=fusion_features,
-                    target_embed=findings if mode == "train" else None,
+            #     findings_logits, F_t, findings_text, findings_loss = self.findings_decoder(
+            #         F_v=fusion_features,
+            #         target_embed=findings if mode == "train" else None,
+            #     )
+            # else:
+            #     findings_logits = None
+            #     F_t = None
+            #     findings_text = None
+            #     findings_loss = torch.tensor(0.0)
+
+            findings_logits = None
+            F_t = None
+            findings_text = None
+            findings_loss = torch.tensor(0.0)
+
+            # F_F = self.impression_decoder.text_decoder.get_text_embeddings(
+            #     findings if mode == "train" else findings_text
+            # )
+
+            if self.args.CO:
+                F_t_prime, F_v_prime = self.co_attention_module(F_F, F_v)
+                memory = torch.cat([F_v, F_t_prime, F_v_prime], dim=1)
+                memory, impression_logits, impression_text, impression_loss = (
+                    self.impression_decoder(
+                        F_t_prime,
+                        F_v_prime,
+                        F_v,
+                        impression if mode == "train" else None,
+                        memory=memory,
+                    )
                 )
             else:
-                findings_logits = None
-                F_t = None
-                findings_text = None
-                findings_loss = torch.tensor(0.0)
+                # memory = torch.cat([F_v, F_t], dim=1)
+                memory = F_v
+                memory, impression_logits, impression_text, impression_loss = (
+                    self.impression_decoder(
+                        F_t,
+                        F_t,
+                        F_v,
+                        impression if mode == "train" else None,
+                        memory,
+                    )
+                )
+
+            if self.args.CLS:
+                class_logits = self.multi_label_classifier(memory)
+            else:
+                class_logits = None
+
+            if self.args.CL:
+                F_F = self.cxr_bert_feature_extractor(findings_text)
+                F_I = self.cxr_bert_feature_extractor(impression_text)
+            else:
+                F_F = None
+                F_I = None
+
+            return {
+                "findings_logits": findings_logits,
+                "findings_text": findings_text,
+                "impression_logits": impression_logits,
+                "impression_text": impression_text,
+                "loss_lm": findings_loss + impression_loss,
+                "findings_loss": findings_loss,
+                "impression_loss": impression_loss,
+                "F_F": F_F,
+                "F_I": F_I,
+                "class_logits": class_logits,
+            }
+        
+        elif train_stage == 3:
+            F_v = self.image_encoder(image)  # (B, C)
+
+            history = self.history_encoder(history)
+
+            fusion_features = self.modality_fusion(F_v, history)
+
+            findings_logits, F_t, findings_text, findings_loss = self.findings_decoder(
+                F_v=fusion_features,
+                target_embed=findings if mode == "train" else None,
+            )
 
             F_F = self.impression_decoder.text_decoder.get_text_embeddings(
                 findings if mode == "train" else findings_text
@@ -699,3 +771,4 @@ class HiMrGn(nn.Module):
                 "F_I": F_I,
                 "class_logits": class_logits,
             }
+    

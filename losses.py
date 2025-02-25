@@ -88,8 +88,8 @@ class CombinedLoss(nn.Module):
         feature_dim=768,
         projection_dim=128,
         hidden_dim=256,
-        lambda_contrastive=1.0,
-        lambda_class=1.0,
+        lambda_contrastive=0.1,
+        lambda_class=0.1,
     ):
         """
         综合损失函数，包括：

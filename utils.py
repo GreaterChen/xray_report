@@ -171,9 +171,6 @@ def train(
     model.train()
     running_loss = 0
 
-    # 计算当前训练进度
-    total_steps = len(data_loader) * num_epochs  # 总步数
-
     prog_bar = tqdm(data_loader)
     for i, batch in enumerate(prog_bar):
         findings_gt = batch["findings"]
@@ -197,9 +194,12 @@ def train(
                 output = args_to_kwargs(output, kw_out)
                 if train_stage == 1:
                     loss = output["loss_lm"]
-                else:
+                elif train_stage == 2:
                     loss, _ = criterion(output, target)
                     loss = loss + output["impression_loss"]
+                elif train_stage == 3:
+                    loss, _ = criterion(output, target)
+                    loss = loss + output["loss_lm"]
 
             running_loss += loss.item()
             prog_bar.set_description(f"Loss: {running_loss/(i+1)} | LR: {current_lr}")
@@ -281,7 +281,7 @@ def test(
 
             # 收集预测结果
             findings_preds_list.extend([re for re in output["findings_text"]])
-            if train_stage == 2:
+            if train_stage != 1:
                 impression_preds_list.extend([re for re in output["impression_text"]])
 
             # 记录日志
@@ -308,7 +308,7 @@ def test(
         }
 
         # 添加impression相关数据(如果是第二阶段)
-        if train_stage == 2:
+        if train_stage != 1:
             results_data["impression_gt"] = impression_gts_list
             results_data["impression_pred"] = impression_preds_list
 
@@ -319,7 +319,7 @@ def test(
         )
 
         impression_met = None
-        if train_stage == 2:
+        if train_stage != 1:
             impression_met = metric_ftns(
                 {i: [gt] for i, gt in enumerate(impression_gts_list)},
                 {i: [re] for i, re in enumerate(impression_preds_list)},
@@ -352,7 +352,7 @@ def test(
             metrics_data[f"findings_{metric_name}"] = value
 
         # 添加impression指标(如果是第二阶段)
-        if train_stage == 2 and impression_met:
+        if train_stage != 1 and impression_met:
             for metric_name, value in impression_met.items():
                 metrics_data[f"impression_{metric_name}"] = value
 
@@ -744,7 +744,7 @@ def save_generations(
 
             # 收集预测结果
             findings_preds_list.extend([re for re in output["findings_text"]])
-            if train_stage == 2:
+            if train_stage != 1:
                 impression_preds_list.extend([re for re in output["impression_text"]])
 
     # 创建保存目录

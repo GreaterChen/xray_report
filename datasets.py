@@ -47,15 +47,14 @@ class MIMIC(data.Dataset):  # MIMIC-CXR Dataset
                     item for item in data_split if item["findings"].strip() != ""
                 ]
             cls._shared_data["annotation"] = filtered_annotation
-        elif stage == 2:
+        elif stage == 2 or stage == 3:
             filtered_annotation = {}
             for key, data_split in annotation_data.items():
                 filtered_annotation[key] = [
                     item for item in data_split if item["impression"].strip() != ""
                 ]
             cls._shared_data["annotation"] = filtered_annotation
-        elif stage == 3:  # todo
-            raise NotImplementedError("Stage 3 is not implemented")
+
 
         cls._shared_data["loaded"] = True
 

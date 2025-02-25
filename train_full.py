@@ -169,7 +169,7 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--train_batch_size", type=int, default=64, help="Batch size for training."
+        "--train_batch_size", type=int, default=16, help="Batch size for training."
     )
     parser.add_argument(
         "--val_batch_size", type=int, default=4, help="Batch size for validation."
@@ -182,7 +182,7 @@ def parse_args():
     )
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate.")
     parser.add_argument(
-        "--min_lr", type=float, default=5e-6, help="Minimum learning rate."
+        "--min_lr", type=float, default=1e-6, help="Minimum learning rate."
     )
     parser.add_argument(
         "--warmup_lr", type=float, default=5e-6, help="Warmup learning rate."
@@ -209,7 +209,9 @@ def parse_args():
         "--checkpoint_path_from",
         type=str,
         # default="/home/chenlb/xray_report_generation/results/stage1/49visual_extend/epoch_12_BLEU_1_0.3919511280957931.pth",
-        default="/home/chenlb/xray_report_generation/results/resnet/stage1/epoch_19_BLEU_1_0.41520361597936345.pth",
+        # default="/home/chenlb/xray_report_generation/results/resnet/stage1/epoch_19_BLEU_1_0.41520361597936345.pth",
+        default="/mnt/chenlb/results/MRG/ours/stage2/no_co/epoch_15_BLEU_1_0.2563890373855226.pth",
+        # default="/home/chenlb/xray_report_generation/results/stage3/baseline/epoch_2_BLEU_1_0.4009259151415555_0.18074402611477508.pth",
         # default="/home/chenlb/xray_report_generation/results/stage1/49visual/epoch_8_BLEU_1_0.3736232743510843.pth",
         # default="/home/chenlb/xray_report_generation/results/stage2/cxr_bert/epoch_8_BLEU_1_0.19664481187635488.pth",
         help="Path to load the checkpoint from.",
@@ -217,7 +219,7 @@ def parse_args():
     parser.add_argument(
         "--checkpoint_path_to",
         type=str,
-        default="/home/chenlb/xray_report_generation/results/stage2/test_cls",
+        default="/home/chenlb/xray_report_generation/results/stage3/again",
         help="Path to save the checkpoint to.",
     )
     args = parser.parse_args()
@@ -260,7 +262,7 @@ if __name__ == "__main__":
         # 设置训练阶段和调试模式
         train_stage = (
             1
-            if args.phase == "TRAIN_STAGE_1"
+            if args.phase == "TRAIN_STAGE_3"
             else 2 if args.phase == "TRAIN_STAGE_2" else 3
         )
 
@@ -273,7 +275,7 @@ if __name__ == "__main__":
             train_stage=train_stage,
             tokenizer=tokenizer,
             mode="train",
-            subset_size=200 if args.debug else None,
+            subset_size=50 if args.debug else None,
         )
 
         val_data = MIMIC(
@@ -487,17 +489,17 @@ if __name__ == "__main__":
         # model.impression_decoder.load_state_dict(model.findings_decoder.state_dict())
 
         # 冻结指定模块的参数
-        for param in model.image_encoder.parameters():
-            param.requires_grad = False
+        # for param in model.image_encoder.parameters():
+        #     param.requires_grad = False
 
-        for param in model.history_encoder.parameters():
-            param.requires_grad = False
+        # for param in model.history_encoder.parameters():
+        #     param.requires_grad = False
 
-        for param in model.modality_fusion.parameters():
-            param.requires_grad = False
+        # for param in model.modality_fusion.parameters():
+        #     param.requires_grad = False
 
-        for param in model.findings_decoder.parameters():
-            param.requires_grad = False
+        # for param in model.findings_decoder.parameters():
+        #     param.requires_grad = False
 
         logger.info(
             "已冻结 image_encoder, history_encoder, modality_fusion, findings_decoder 的参数"
@@ -576,6 +578,98 @@ if __name__ == "__main__":
             )
 
             logger.info(f"Saved To: {save_path}")
+
+    elif args.phase == "TRAIN_STAGE_3" and args.mode == "TRAIN":
+        # # 加载第一个checkpoint文件
+        # ckpt1 = torch.load('/home/chenlb/xray_report_generation/results/resnet/stage1/epoch_19_BLEU_1_0.41520361597936345.pth')
+        # model_state_dict1 = ckpt1['model_state_dict']
+
+        # # 加载第二个checkpoint文件 
+        # ckpt2 = torch.load('/home/chenlb/xray_report_generation/results/stage2/test_cls/epoch_10_BLEU_1_0.19510754670748817.pth')
+        # model_state_dict2 = ckpt2['model_state_dict']
+
+        # # 创建一个新的state_dict来存储合并后的权重
+        # new_state_dict = {}
+
+        # # 从第一个checkpoint加载指定组件的权重
+        # components1 = ['image_encoder', 'history_encoder', 'modality_fusion', 'findings_decoder']
+        # for k, v in model_state_dict1.items():
+        #     if any(comp in k for comp in components1):
+        #         new_state_dict[k] = v
+
+        # # 从第二个checkpoint加载指定组件的权重
+        # components2 = ['co_attention_module', 'impression_decoder']
+        # for k, v in model_state_dict2.items():
+        #     if any(comp in k for comp in components2):
+        #         new_state_dict[k] = v
+
+        # # 加载合并后的权重到模型
+        # model.load_state_dict(new_state_dict, strict=False)
+
+        # _, _ = load(args.checkpoint_path_from, model, optimizer, scheduler)
+        # logger.info(f"从 {args.checkpoint_path_from} 加载模型权重")
+
+        criterion = CombinedLoss(pad_id=pad_id).cuda()
+        scaler = torch.cuda.amp.GradScaler()
+
+        for epoch in range(last_epoch + 1, args.epochs):
+            print(f"Epoch: {epoch}")
+            train_loss = train(
+                args,
+                train_loader,
+                model,
+                optimizer,
+                criterion,
+                scheduler=scheduler,
+                num_epochs=args.epochs,
+                current_epoch=epoch,
+                device="cuda",
+                kw_src=args.kw_src,
+                kw_tgt=args.kw_tgt,
+                kw_out=args.kw_out,
+                scaler=scaler,
+                train_stage=3,
+            )
+
+            test_loss, result = test(
+                args,
+                test_loader,
+                model,
+                logger,
+                mode="test",
+                metric_ftns=metrics,
+                criterion=criterion,
+                device="cuda",
+                kw_src=args.kw_src,
+                kw_tgt=args.kw_tgt,
+                kw_out=args.kw_out,
+                train_stage=3,
+                epoch=epoch,
+            )
+
+            # 记录测试结果
+            log_metrics(logger, epoch, train_loss, test_loss, result)
+
+            # 保存检查点时使用BLEU_1分数
+            save_path = os.path.join(
+                args.checkpoint_path_to,
+                f'epoch_{epoch}_BLEU_1_{result["metrics_df"]["findings_BLEU_1"].iloc[0]}_{result["metrics_df"]["impression_BLEU_1"].iloc[0]}.pth',
+            )
+            save(
+                save_path,
+                model,
+                optimizer,
+                scheduler,
+                epoch,
+                (test_loss, result),
+            )
+
+            logger.info(f"Saved To: {save_path}")
+
+        
+
+
+            
 
     elif args.mode == "TEST":
         # 确保提供了checkpoint路径
