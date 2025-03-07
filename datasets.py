@@ -121,6 +121,7 @@ class MIMIC(data.Dataset):  # MIMIC-CXR Dataset
         impression = self.my_pre_caption(info["impression"])
         findings = self.my_pre_caption(info["findings"])
         history = self.my_pre_caption(info["history"])
+        findings = f"findings {findings} impression {impression}"
         label = np.array(info["labels"], dtype=np.float32)
 
         # 获取图像路径

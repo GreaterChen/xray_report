@@ -38,7 +38,7 @@ def parse_args():
 
     parser.add_argument("--debug", default=False, help="Debug mode.")
     parser.add_argument("--CLS", default=False, help="Classifier.")
-    parser.add_argument("--CO", default=True, help="Co-attention.")
+    parser.add_argument("--CO", default=False, help="Co-attention.")
     parser.add_argument("--CL", default=False, help="Constrained Learning.")
     parser.add_argument(
         "--co_num_heads", type=int, default=1, help="Number of heads for co-attention."
@@ -67,8 +67,8 @@ def parse_args():
     parser.add_argument(
         "--ann_dir",
         type=str,
-        default="/mnt/chenlb/datasets/mimic_cxr/mimic_annotation_impression-full.json",
-        # default="/mnt/chenlb/datasets/mimic_cxr/mimic_annotation.json",
+        # default="/mnt/chenlb/datasets/mimic_cxr/mimic_annotation_impression-full.json",
+        default="/mnt/chenlb/datasets/mimic_cxr/mimic_annotation.json",
         help="Path to the annotation file.",
     )
 
@@ -154,7 +154,7 @@ def parse_args():
     parser.add_argument(
         "--phase",
         type=str,
-        default="TRAIN_STAGE_3",
+        default="TRAIN_STAGE_1",
         choices=["TRAIN_STAGE_1", "TRAIN_STAGE_2", "TRAIN_STAGE_3", "TEST", "INFER"],
         help="Phase of the program",
     )
@@ -169,10 +169,10 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--train_batch_size", type=int, default=16, help="Batch size for training."
+        "--train_batch_size", type=int, default=32, help="Batch size for training."
     )
     parser.add_argument(
-        "--val_batch_size", type=int, default=4, help="Batch size for validation."
+        "--val_batch_size", type=int, default=8, help="Batch size for validation."
     )
     parser.add_argument(
         "--num_workers", type=int, default=6, help="Number of workers for training."
@@ -210,16 +210,17 @@ def parse_args():
         type=str,
         # default="/home/chenlb/xray_report_generation/results/stage1/49visual_extend/epoch_12_BLEU_1_0.3919511280957931.pth",
         # default="/home/chenlb/xray_report_generation/results/resnet/stage1/epoch_19_BLEU_1_0.41520361597936345.pth",
-        default="/mnt/chenlb/results/MRG/ours/stage2/no_co/epoch_15_BLEU_1_0.2563890373855226.pth",
+        # default="/mnt/chenlb/results/MRG/ours/stage2/no_co/epoch_15_BLEU_1_0.2563890373855226.pth",
         # default="/home/chenlb/xray_report_generation/results/stage3/baseline/epoch_2_BLEU_1_0.4009259151415555_0.18074402611477508.pth",
         # default="/home/chenlb/xray_report_generation/results/stage1/49visual/epoch_8_BLEU_1_0.3736232743510843.pth",
         # default="/home/chenlb/xray_report_generation/results/stage2/cxr_bert/epoch_8_BLEU_1_0.19664481187635488.pth",
+        default=None,
         help="Path to load the checkpoint from.",
     )
     parser.add_argument(
         "--checkpoint_path_to",
         type=str,
-        default="/home/chenlb/xray_report_generation/results/stage3/again",
+        default="/home/chenlb/xray_report_generation/results/stage1/total",
         help="Path to save the checkpoint to.",
     )
     args = parser.parse_args()
